@@ -1,0 +1,285 @@
+from typing import TypedDict, Dict, List, Optional, Annotated, Literal, Any
+
+# --- Enumerated Types ---
+SeverityLevel = Literal[
+    "Critical", # 危机级别：可能导致灾难性后果，需立即最高级别响应
+    "High",     # 高危级别：可能导致严重后果，需紧急优先处理
+    "Medium",   # 中危级别：可能导致显著后果，需标准流程处理
+    "Low",      # 低危级别：可能导致轻微后果，需关注但优先级较低
+    "Unknown"   # 未知级别：当前信息不足以判断严重性
+]
+
+InformationReliability = Literal[
+    "Confirmed", # 已确认：信息来源可靠，内容已通过交叉验证
+    "Probable",  # 很可能：信息来源相对可靠，内容逻辑合理但未完全验证
+    "Possible",  # 可能：信息来源不确定或单一，内容有待证实
+    "Doubtful",  # 可疑：信息来源不可靠，或内容与已知事实冲突
+    "Unreliable" # 不可靠：信息已被证伪或来源明确虚假
+]
+
+RiskLikelihood = Literal[
+    "Very High", # 极高可能性：几乎肯定会发生 (>90%)
+    "High",     # 高可能性：很可能会发生 (50-90%)
+    "Medium",   # 中等可能性：有可能发生 (10-50%)
+    "Low",      # 低可能性：不太可能发生 (1-10%)
+    "Very Low"  # 极低可能性：基本不可能发生 (<1%)
+]
+
+RiskImpact = Literal[
+    "Catastrophic", # 灾难性影响：可能导致大范围生命损失、系统崩溃、长期恢复
+    "Critical",     # 关键性影响：可能导致显著生命损失、关键设施严重破坏、较长恢复期
+    "Moderate",     # 中度影响：可能导致人员伤亡、设施损坏、需要外部资源支持恢复
+    "Minor",        # 轻微影响：可能导致少量财产损失、服务中断，可内部资源应对
+    "Negligible"    # 可忽略影响：几乎没有实际损失或影响
+]
+
+PriorityLevel = Literal[
+    "Urgent",   # 紧急：必须立即处理，最高优先级
+    "High",     # 高：需尽快处理，优先级高
+    "Medium",   # 中：按标准流程处理，优先级中等
+    "Low"       # 低：可在其他任务完成后处理，优先级低
+]
+
+ResourceStatus = Literal[
+    "Available",    # 可用：资源当前空闲且可立即调配
+    "Assigned",     # 已分配：资源已分配给特定任务，但可能尚未开始或正在执行
+    "InTransit",    # 在途：资源正在前往指定地点的途中
+    "OutOfService", # 不可用/故障：资源因损坏、维护或其他原因暂时无法使用
+    "Demobilized"   # 已撤离：资源已完成任务并按计划撤离现场
+]
+
+SimulationStatus = Literal[
+    "Completed",            # 完成：模拟按预期正常结束
+    "TerminatedByCondition",# 条件终止：模拟因达到预设的结束条件（非失败）而终止
+    "FailedToRun",          # 运行失败：模拟未能成功启动或在过程中因错误中断
+    "Timeout"               # 超时终止：模拟运行时间超过预设上限而终止
+]
+
+PlanStatus = Literal[ # 主要用于PlanManager内部状态，非直接资产字段
+    "Pending",      # 待处理：任务或步骤尚未开始
+    "InProgress",   # 进行中：任务或步骤正在执行
+    "Completed",    # 已完成：任务或步骤已成功完成
+    "Failed",       # 失败：任务或步骤执行失败
+    "Waiting"       # 等待中：任务或步骤因等待前置条件或资源而暂停
+]
+# --- Sub-Structures Definition ---
+
+class KeyElement(TypedDict):
+    """定义事件的关键信息要素及其状态"""
+    element_name: Annotated[str, "要素名称 (例如: 'time_occurred', 'precise_location', 'casualties_initial', 'hazard_type', 'current_actions')"]
+    value: Annotated[Any, "要素的值 (可以是字符串、数字、列表等)"]
+    status: Annotated[Literal["Confirmed", "Estimated", "Missing", "Conflicting", "ToVerify"], "要素状态 (已确认/估计/缺失/矛盾/待验证)"]
+    source_refs: Annotated[Optional[List[str]], "关联的原始信息来源ID (可选，用于追溯)"]
+    timestamp: Annotated[str, "要素确认或最后更新时间 (ISO 8601)"]
+
+class ActiveRole(TypedDict):
+    """定义响应团队中激活的角色实例及其配置"""
+    role_name: Annotated[Literal["Strategist", "Awareness", "FieldExpert", "Executor"], "SAFE框架定义的角色名称"]
+    instance_id: Annotated[str, "该角色在本次事件中的唯一实例ID"]
+    specific_config: Annotated[Optional[Dict[str, Any]], "角色的特定配置 (例如: FieldExpert的专业领域 'Hydrology', 'Chemical') (可选)"]
+
+class RiskItem(TypedDict):
+    """定义单个已识别的风险条目"""
+    risk_id: Annotated[str, "风险唯一标识"]
+    description: Annotated[str, "风险的具体描述"]
+    type: Annotated[str, "风险类型 (例如: 'Safety', 'Environmental', 'SecondaryHazard', 'Operational')"]
+    likelihood: Annotated[RiskLikelihood, "风险发生的可能性评估"]
+    impact: Annotated[RiskImpact, "风险发生的影响程度评估"]
+    priority: Annotated[PriorityLevel, "基于可能性和影响评估的综合优先级"]
+    mitigation_suggestions: Annotated[Optional[List[str]], "初步的风险缓解措施建议 (可选)"]
+
+class ObjectiveItem(TypedDict):
+    """定义单个具体的响应目标或目的"""
+    objective_id: Annotated[str, "目标唯一标识"]
+    description: Annotated[str, "目标的具体描述 (应力求清晰、可衡量、可达成、相关、有时限的部分特征 - SMART原则的部分体现)"]
+    priority: Annotated[PriorityLevel, "目标的优先级"]
+    parent_goal_ref: Annotated[Optional[str], "关联的更高层级总体目标描述或ID (可选)"]
+    timeframe: Annotated[Optional[str], "完成该目标预期的时间窗口或截止期限 (可选)"]
+
+class CoAOptionItem(TypedDict):
+    """定义一个具体的行动方案选项"""
+    coa_id: Annotated[str, "CoA选项唯一标识"]
+    description: Annotated[str, "方案选项的概述和核心策略"]
+    key_actions: Annotated[List[str], "执行该方案所需的关键行动步骤列表"]
+    required_resource_types: Annotated[List[str], "执行该方案所需的核心资源类型概述 (非详细清单)"]
+    pros: Annotated[List[str], "该方案的主要优点或预期收益"]
+    cons_risks: Annotated[List[str], "该方案的主要缺点、限制或潜在风险"]
+    preliminary_assessment: Annotated[str, "生成者对该方案的初步评估意见 (例如: '高可行性', '高风险高收益', '资源需求大')"]
+    source_expert_ref: Annotated[Optional[str], "提出该方案的Field Expert实例ID (可选)"]
+
+class ResourceNeedItem(TypedDict):
+    """定义对某一类型资源的具体需求"""
+    resource_type: Annotated[str, "所需资源的具体类型描述 (应尽可能标准化)"]
+    required_quantity: Annotated[float | str, "所需数量 (可以是具体数字，或'持续保障'等描述)"]
+    priority: Annotated[PriorityLevel, "该资源需求的优先级"]
+    justification: Annotated[Optional[str], "需要该资源的理由说明 (可选)"]
+
+class ResourceAvailableItem(TypedDict):
+    """定义一个具体可用资源实例或批次的信息"""
+    resource_id: Annotated[str, "可用资源实例或批次的唯一标识"]
+    resource_type: Annotated[str, "资源类型 (应与需求类型对应)"]
+    available_quantity: Annotated[float, "当前可用的数量"]
+    location: Annotated[str | GeoJSONStr, "资源的当前位置"]
+    status: Annotated[ResourceStatus, "资源的当前状态 (可用/已分配/在途等)"]
+    eta_if_needed: Annotated[Optional[str], "如果需要调配，预计到达目标地点的时间 (ISO 8601) (可选)"]
+    unit_of_measure: Annotated[Optional[str], "数量的单位 (可选, e.g., '人', '台', '吨')"]
+
+class ResourceGapItem(TypedDict):
+    """定义一个已识别的资源缺口"""
+    resource_type: Annotated[str, "存在缺口的资源类型"]
+    gap_quantity: Annotated[float | str, "缺口数量或描述"]
+    priority: Annotated[PriorityLevel, "该缺口的优先级"]
+    potential_solutions: Annotated[Optional[List[str]], "建议的解决方案 (例如: '请求市级增援', '寻找替代资源', '调整方案') (可选)"]
+
+class ActionOrderItem(TypedDict):
+    """定义行动方案中的一个具体任务分配或指令 (类似ICS 204的核心内容)"""
+    task_id: Annotated[str, "分配的任务或指令的唯一标识"]
+    description: Annotated[str, "需要执行的具体任务或达成的目标的清晰描述"]
+    responsible_unit_role: Annotated[str, "负责执行该任务的逻辑单位或角色 (例如: '现场搜救组', 'Awareness', '水利专家F')"]
+    assigned_resources: Annotated[Optional[List[str]], "明确分配用于此任务的具体资源ID列表 (可选)"]
+    timeline: Annotated[Optional[str], "任务执行的时间要求或期限 (可选)"]
+    special_instructions: Annotated[Optional[str], "执行此任务的特殊指令、注意事项或安全提示 (可选)"]
+
+class LogEntryItem(TypedDict):
+    """定义执行过程日志中的一条记录"""
+    timestamp: Annotated[str, "该日志条目记录的时间 (ISO 8601)"]
+    simulated_action: Annotated[str, "在模拟环境中执行的具体动作描述"]
+    resource_change: Annotated[Optional[Dict[str, Any]], "该动作导致的资源状态或数量变化详情 (可选)"]
+    state_update: Annotated[Optional[Dict[str, Any]], "该动作导致的关键模拟环境状态更新 (可选)"]
+    outcome_metric: Annotated[Optional[Dict[str, Any]], "与该动作相关的中间结果或性能指标 (可选)"]
+    notes: Annotated[Optional[str], "关于此条日志的额外备注 (可选)"]
+
+class FindingItem(TypedDict):
+    """定义执行结果检查或复盘总结中的一个发现点"""
+    finding_id: Annotated[str, "发现点的唯一标识"]
+    description: Annotated[str, "对发现点（偏差、亮点、问题、经验教训）的具体描述"]
+    type: Annotated[Literal["Deviation", "Strength", "Issue", "LessonLearned", "Recommendation"], "发现点的类型"]
+    comparison_details: Annotated[Optional[str], "与原计划或预期的对比细节 (可选)"]
+    assessment: Annotated[Optional[str], "对该发现点重要性或影响的评估 (可选)"]
+    recommendation_action: Annotated[Optional[str], "针对该发现点提出的改进建议或后续行动 (可选)"]
+
+
+# --- Main Asset Definitions (using TypedDict) ---
+
+class EventRecord(TypedDict):
+    """(Asset Type 1) 对已确认事件进行唯一标识和基础信息归档。SOP-01输出, SOP-02输入。"""
+    event_id: Annotated[str, "SAFE框架内全局唯一的事件标识符"] # Required
+    creation_timestamp: Annotated[str, "记录创建时间 (ISO 8601)"] # Required
+    confirmation_timestamp: Annotated[str, "事件被确认的时间 (ISO 8601)"] # Required
+    confirmed_location: Annotated[str | GeoJSONStr, "经过初步确认或规范化的事件地点"] # Required
+    confirmed_event_type: Annotated[str, "经过初步确认的事件类型"] # Required
+    initial_severity_assessment: Annotated[SeverityLevel, "初步严重性评估"] # Required
+    initial_source_ref: Annotated[List[str], "引用触发该记录的原始信息来源ID"] # Required
+
+class KeyElementList(TypedDict):
+    """(Asset Type 2) 结构化存储经过检查和初步补全的事件核心要素。SOP-01输出, SOP-02输入。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "清单生成或最后更新时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    elements: Annotated[List[KeyElement], "包含关键要素的列表"] # Required
+    identified_gaps: Annotated[List[str], "明确列出的仍然缺失的关键要素名称"] # Required
+    conflicting_elements: Annotated[Optional[List[Dict]], "列出发现的存在矛盾的信息点及其来源 (可选)"] # Optional
+
+class TeamConfiguration(TypedDict):
+    """(Asset Type 3) 定义本次响应中激活的SAFE角色及其特定配置。SOP-01输出。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "配置生成时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    active_roles: Annotated[List[ActiveRole], "激活的角色实例列表"] # Required
+
+class SituationalPicture(TypedDict):
+    """(Asset Type 4) 提供对当前事件态势的整体理解。SOP-02输出, SOP-03输入。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "态势分析完成时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    situation_summary: Annotated[str, "对当前整体态势的文本描述 (应包含时间、地点、事件性质、发展趋势、主要影响等)"] # Required
+    impact_assessment: Annotated[Dict[str, Any], "结构化的影响评估, e.g., {'area': '...', 'population': '...', 'infrastructure': ['...', '...']}"] # Required
+    vulnerability_points: Annotated[Optional[List[str]], "识别出的关键脆弱点 (可选)"] # Optional
+    current_response_summary: Annotated[Optional[str], "对现场已有响应行动的总结 (可选)"] # Optional
+    information_reliability: Annotated[Optional[InformationReliability], "对所用信息整体可靠性的评估 (可选)"] # Optional
+
+class RiskAssessmentReport(TypedDict):
+    """(Asset Type 5) 提供对事件主要风险的系统性评估结果。SOP-02输出, SOP-03输入。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "评估完成时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    risk_summary: Annotated[str, "主要风险概述"] # Required
+    identified_risks: Annotated[List[RiskItem], "结构化风险列表"] # Required
+    risk_trend: Annotated[Optional[str], "对风险发展趋势的预测 (可选)"] # Optional
+    assessment_source: Annotated[str, "评估来源 (例如: 'Awareness Preliminary', 'Field Expert Hydrology', 'Strategist Integrated')"] # Required
+    assessment_confidence: Annotated[Optional[str], "评估置信度说明 (可选)"] # Optional
+
+class InitialObjectives(TypedDict):
+    """(Asset Type 6) 明确下一阶段的行动方向和优先级。SOP-03输出。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "目标设定时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    overall_goal: Annotated[str, "清晰的总体目标陈述"] # Required
+    objectives_list: Annotated[List[ObjectiveItem], "结构化目标列表"] # Required
+
+class RecommendedCoA(TypedDict):
+    """(Asset Type 7) 记录经过评估和选择（或整合）后的推荐方案核心内容。SOP-03输出, SOP-04输入。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "方案确定时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    target_objectives_ids: Annotated[List[str], "该方案旨在达成的目标ID列表"] # Required
+    strategy_description: Annotated[str, "推荐方案的核心策略描述"] # Required
+    key_actions_refined: Annotated[List[str], "优化或整合后的关键行动步骤"] # Required
+    resource_needs_summary: Annotated[str, "所需核心资源类型的概述"] # Required
+    risk_mitigation_notes: Annotated[Optional[str], "针对方案执行风险的缓解措施说明 (可选)"] # Optional
+    selection_rationale: Annotated[Optional[str], "选择该方案的主要理由概述 (可选)"] # Optional
+
+class ConfirmedResourceListGaps(TypedDict):
+    """(Asset Type 8) 明确执行推荐方案所需的资源及其可用性，识别短板。SOP-04输出。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "确认时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    coa_ref: Annotated[str, "关联的推荐方案(RecommendedCoA)资产ID"] # Required
+    resource_requirements: Annotated[List[ResourceNeedItem], "详细资源需求列表"] # Required
+    resource_availability: Annotated[List[ResourceAvailableItem], "确认的可用资源列表"] # Required
+    identified_gaps: Annotated[List[ResourceGapItem], "识别出的资源缺口列表"] # Required
+
+class ActionPlan(TypedDict):
+    """(Asset Type 9) 规划阶段的最终成果，整合关键决策信息，用于指导下一步行动。SOP-04输出, SOP-05输入。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "计划定稿时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    plan_version: Annotated[str, "计划版本号"] # Required
+    operational_period: Annotated[str, "计划适用的运作周期或时间范围"] # Required
+    objectives_ref: Annotated[str, "引用的目标资产ID"] # Required
+    coa_ref: Annotated[str, "引用的推荐方案资产ID"] # Required
+    resource_confirmation_ref: Annotated[str, "引用的资源确认与缺口资产ID"] # Required
+    action_orders: Annotated[List[ActionOrderItem], "核心的行动指令集/任务分配列表"] # Required
+    supporting_info: Annotated[Optional[Dict[str, Any]], "其他支持信息 (例如: 安全信息, 通讯计划引用) (可选)"] # Optional
+
+class ExecutionLog(TypedDict):
+    """(Asset Type 10) 记录模拟执行的关键过程和状态变化。SOP-05输出, SOP-06输入。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "日志生成时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    plan_ref: Annotated[str, "引用的被执行的ActionPlan资产ID"] # Required
+    simulation_environment: Annotated[str, "使用的EVE标识或描述"] # Required
+    log_entries: Annotated[List[LogEntryItem], "按时间顺序记录的日志条目列表"] # Required
+    final_simulation_status: Annotated[SimulationStatus, "模拟结束时的最终状态"] # Required
+    overall_outcome_summary: Annotated[Optional[str], "对模拟执行总体结果的简要总结 (可选)"] # Optional
+
+class ExecutionCheckReport(TypedDict):
+    """(Asset Type 11) 对比计划与模拟执行结果，评估方案表现。SOP-06输出。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "检查完成时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    plan_ref: Annotated[str, "引用的ActionPlan资产ID"] # Required
+    log_ref: Annotated[str, "引用的ExecutionLog资产ID"] # Required
+    check_summary: Annotated[str, "检查结论概述 (例如: '基本符合计划', '存在显著偏差')"] # Required
+    key_findings: Annotated[List[FindingItem], "结构化的关键发现点列表 (偏差、亮点、问题等)"] # Required
+    objective_achievement_assessment: Annotated[Optional[str], "对原定目标达成情况的评估 (可选)"] # Optional
+
+class ReviewSummaryReport(TypedDict):
+    """(Asset Type 12) 对整个SAFE框架运行流程和结果进行总结。SOP-06输出。"""
+    asset_id: Annotated[str, "资产唯一标识"] # Required
+    timestamp: Annotated[str, "总结完成时间 (ISO 8601)"] # Required
+    event_id_ref: Annotated[str, "关联的事件ID"] # Required
+    process_summary: Annotated[str, "对本次SAFE流程运行情况的概述 (效率、协同、主要环节表现等)"] # Required
+    key_findings_ref: Annotated[List[str], "引用的ExecutionCheckReport中的关键发现点ID"] # Required
+    lessons_learned: Annotated[Optional[List[str]], "提炼的经验教训 (可选)"] # Optional
+    recommendations: Annotated[Optional[List[str]], "对未来计划或SAFE框架本身的改进建议 (可选)"] # Optional

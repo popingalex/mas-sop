@@ -1,0 +1,33 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# 使用Autogen时需要遵守以下规则
+- 版本以```requirements.txt```为准
+- 每次我纠正你autogen的错误依赖时，都应该追加规则到这个rule文件
+- 正确依赖 
+    ```
+    pip install autogen-agentchat
+    pip install autogen-ext[openai]
+    ```
+- 错误依赖
+    - autogen（错误：其他同名包）
+    - pyautogen（错误：第三方非官方包）
+
+- 正确引用
+    ```python
+    from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
+    ```
+- 错误引用
+    ```python
+    from autogen import AssistantAgent
+    from autogen_agentchat import AssistantAgent
+    from autogen.agentchat import AssistantAgent
+    ```
+- 添加系统中没有的新功能时，必须查看官方文档和源码：
+    1. https://microsoft.github.io/autogen/stable/
+    2. https://microsoft.github.io/autogen/stable/reference/
+    3. https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/examples/
+    4. https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/migration-guide.html
+    5. https://github.com/microsoft/autogen/tree/main/python

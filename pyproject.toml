@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+pythonpath = [
+  ".",
+  "src",
+]
+
+# Keep other potential configurations below if they exist
+# For example:
+# [tool.ruff]
+# ... 
