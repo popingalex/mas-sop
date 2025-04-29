@@ -27,34 +27,15 @@ class PlanManagingAgent(AssistantAgent):
             system_message: Agent 的系统消息。
             **kwargs: 传递给父类 AssistantAgent 的其他参数。
         """
+        plan_manager = plan_manager if plan_manager is not None else PlanManager()
+        self._plan_manager = plan_manager
+
         if system_message is None:
             system_message = (
                 "You are a specialized assistant for managing hierarchical plans and their steps. "
-                "Your goal is to understand user requests related to plan and step operations (creation, retrieval, listing, updating, deletion, adding notes) "
-                "and use the provided tools to perform these actions. "
-                "Available tools are: create_plan, get_plan, list_plans, delete_plan, update_plan_status, "
-                "add_step, update_step, add_note_to_step. "
-                "Carefully identify the correct tool and its required parameters based on the user request. "
-                "For operations involving steps, you need both the plan_id (UUID string) and the step_index (integer starting from 0). "
-                "Always use the provided tools to interact with the plan storage."
+                "Your goal is to understand user requests related to plan and step operations "
+                "(creation, retrieval, listing, updating, deletion, adding notes) "
+                "and use the provided tools to perform these actions."
             )
 
-        super().__init__(name=name, system_message=system_message, model_client=model_client, **kwargs)
-
-        # 初始化 PlanManager
-        self._plan_manager = plan_manager if plan_manager is not None else PlanManager()
-
-        # 将 PlanManager 的公共方法注册为 Agent 的工具
-        # Agent 的 LLM 将根据这些方法的 Docstring 和类型提示来决定如何调用
-        self.register_tools([
-            self._plan_manager.create_plan,
-            self._plan_manager.get_plan,
-            self._plan_manager.list_plans,
-            self._plan_manager.delete_plan,
-            self._plan_manager.update_plan_status,
-            self._plan_manager.add_step,
-            self._plan_manager.update_step,
-            self._plan_manager.add_note_to_step,
-        ])
-
-    # 可以根据需要覆盖其他 Agent 方法 
+        super().__init__(name=name, system_message=system_message, model_client=model_client, tools=plan_manager.tool_list(), **kwargs)
