@@ -18,3 +18,6 @@ pytest-cov==6.0.0
 pytest-asyncio==0.26.0
 ruff>=0.3.0
 
+# New dependency
+typing_inspection>=0.4.0
+

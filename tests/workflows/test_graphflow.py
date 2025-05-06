@@ -1,10 +1,11 @@
 import pytest
-from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.agents import AssistantAgent, MessageFilterAgent
 from autogen_agentchat.teams import DiGraphBuilder, GraphFlow
 from autogen_agentchat.messages import TextMessage
 from src.config.parser import load_llm_config_from_toml
 from src.workflows.graphflow import build_safe_graphflow
 from typing import Dict, Any, List
+from autogen_agentchat.agents import MessageFilterConfig, PerSourceFilter
 
 
 def parse_message(msg: TextMessage) -> Dict[str, str]:
@@ -252,6 +253,172 @@ async def test_nexus_flow(model_client, need_stop_agent: bool = True):
             f"stop_agent 消息来源错误: {stop_messages[0]}"
         
     print("\n=== test_nexus_flow 验证通过 ===")
+
+@pytest.mark.asyncio
+async def test_nexus_flow_with_filter_agent(model_client):
+    """用MessageFilterAgent控制流程，不用condition。"""
+    worker_info = {
+        "worker_a": "擅长分析和规划，适合处理需要思考的任务",
+        "worker_b": "擅长执行和实现，适合处理具体的操作任务"
+    }
+    coordinator = AssistantAgent(
+        name="coordinator",
+        system_message=base_prompt.format(
+            agent_name="coordinator",
+            output_desc=f"""你的处理结果。作为coordinator，你需要：\n1. 可选的worker有: {', '.join(worker_info.keys())}\n2. 每个worker的特点是:\n{chr(10).join(f'   - {name}: {desc}' for name, desc in worker_info.items())}\n3. 根据任务内容选择合适的worker\n4. 在输出中说明选择了哪个worker及选择原因\n5. 输出格式最后一行必须是: 目标worker: worker_a 或 worker_b；如需终止流程，输出'DONE'。"""
+        ),
+        model_client=model_client
+    )
+    worker_a = AssistantAgent(
+        name="worker_a",
+        system_message=base_prompt.format(agent_name="worker_a", output_desc="空着就行"),
+        model_client=model_client
+    )
+    worker_b = AssistantAgent(
+        name="worker_b",
+        system_message=base_prompt.format(agent_name="worker_b", output_desc="空着就行"),
+        model_client=model_client
+    )
+    from autogen_agentchat.agents import MessageFilterConfig, PerSourceFilter, MessageFilterAgent
+    filtered_worker_a = MessageFilterAgent(
+        name="worker_a",
+        wrapped_agent=worker_a,
+        filter=MessageFilterConfig(per_source=[PerSourceFilter(source="coordinator", position="last", count=1)])
+    )
+    filtered_worker_b = MessageFilterAgent(
+        name="worker_b",
+        wrapped_agent=worker_b,
+        filter=MessageFilterConfig(per_source=[PerSourceFilter(source="coordinator", position="last", count=1)])
+    )
+    stop_agent = AssistantAgent(
+        name="stop_agent",
+        system_message="流程终止。",
+        model_client=model_client
+    )
+    participants = [coordinator, filtered_worker_a, filtered_worker_b, stop_agent]
+    builder = DiGraphBuilder()
+    builder.add_node(coordinator)
+    builder.add_node(filtered_worker_a)
+    builder.add_node(filtered_worker_b)
+    builder.add_node(stop_agent)
+    builder.add_edge(coordinator, filtered_worker_a, condition="CONTINUE")
+    builder.add_edge(coordinator, filtered_worker_b, condition="CONTINUE")
+    builder.add_edge(filtered_worker_a, coordinator)
+    builder.add_edge(filtered_worker_b, coordinator)
+    builder.add_edge(coordinator, stop_agent, condition="DONE")
+    builder.set_entry_point(coordinator)
+    flow = GraphFlow(participants=participants, graph=builder.build())
+    raw_events = []
+    # 让coordinator输出末尾为DONE，确保能走到stop_agent
+    task = TextMessage(content="测试filter agent流程，终止流程请输出DONE", source="user")
+    try:
+        async for event in flow.run_stream(task=task):
+            if isinstance(event, TextMessage):
+                raw_events.append(event)
+                print(f"\n--- Event --- Source: {event.source} ---")
+                print(f"Content:\n{event.content}")
+                print(f"--------------------------")
+    except RuntimeError as e:
+        if "No available speakers found" not in str(e):
+            raise
+    # 验证最后一条消息是stop_agent
+    assert raw_events[-1].source == "stop_agent"
+    print("\n=== test_nexus_flow_with_filter_agent 验证通过 ===")
+
+@pytest.mark.asyncio
+async def test_nexus_flow_with_condition_output(model_client):
+    """用不同condition严格控制流程分支，先a后b再done，并用MessageFilterAgent限制上下文。"""
+    worker_info = {
+        "worker_a": "擅长分析和规划，适合处理需要思考的任务",
+        "worker_b": "擅长执行和实现，适合处理具体的操作任务"
+    }
+    coordinator = AssistantAgent(
+        name="coordinator",
+        system_message=(
+            base_prompt.format(
+                agent_name="coordinator",
+                output_desc=(
+                    "你是流程协调者。你的决策规则如下：\n"
+                    "1. 如果收到user的消息，必须把任务分配给worker_a，输出末尾加'CONTINUE_A'。\n"
+                    "2. 如果收到worker_a的消息，必须把任务分配给worker_b，输出末尾加'CONTINUE_B'。\n"
+                    "3. 如果收到worker_b的消息，必须终止流程，输出末尾加'DONE'。\n"
+                    "4. 你的输出末尾只能是CONTINUE_A、CONTINUE_B或DONE，严格遵守。"
+                )
+            )
+        ),
+        model_client=model_client
+    )
+    worker_a_core = AssistantAgent(
+        name="worker_a",
+        system_message=base_prompt.format(
+            agent_name="worker_a",
+            output_desc="你只能回复coordinator，不能分配任务或终止流程，且回复内容不能包含CONTINUE_A、CONTINUE_B、DONE等关键词。"
+        ),
+        model_client=model_client
+    )
+    worker_b_core = AssistantAgent(
+        name="worker_b",
+        system_message=base_prompt.format(
+            agent_name="worker_b",
+            output_desc="你只能回复coordinator，不能分配任务或终止流程，且回复内容不能包含CONTINUE_A、CONTINUE_B、DONE等关键词。"
+        ),
+        model_client=model_client
+    )
+    filtered_worker_a = MessageFilterAgent(
+        name="worker_a",
+        wrapped_agent=worker_a_core,
+        filter=MessageFilterConfig(per_source=[PerSourceFilter(source="coordinator", position="last", count=1)])
+    )
+    filtered_worker_b = MessageFilterAgent(
+        name="worker_b",
+        wrapped_agent=worker_b_core,
+        filter=MessageFilterConfig(per_source=[PerSourceFilter(source="coordinator", position="last", count=1)])
+    )
+    stop_agent = AssistantAgent(
+        name="stop_agent",
+        system_message=base_prompt.format(
+            agent_name="stop_agent",
+            output_desc="确认任务已完成，流程结束。"
+        ),
+        model_client=model_client
+    )
+    participants = [coordinator, filtered_worker_a, filtered_worker_b, stop_agent]
+    builder = DiGraphBuilder()
+    builder.add_node(coordinator)
+    builder.add_node(filtered_worker_a)
+    builder.add_node(filtered_worker_b)
+    builder.add_node(stop_agent)
+    builder.set_entry_point(coordinator)
+    builder.add_edge(coordinator, filtered_worker_a, condition="CONTINUE_A")
+    builder.add_edge(coordinator, filtered_worker_b, condition="CONTINUE_B")
+    builder.add_edge(coordinator, stop_agent, condition="DONE")
+    builder.add_edge(filtered_worker_a, coordinator)
+    builder.add_edge(filtered_worker_b, coordinator)
+    flow = GraphFlow(participants=participants, graph=builder.build())
+    raw_events = []
+    # 明确要求流程必须严格走完三步
+    task = TextMessage(content="请严格按规则：先分配给worker_a（CONTINUE_A），收到worker_a回复后分配给worker_b（CONTINUE_B），收到worker_b回复后终止（DONE）。所有agent必须严格遵守分工和流程！", source="user")
+    try:
+        async for event in flow.run_stream(task=task):
+            print(f"[DEBUG] event type: {type(event).__name__}, source: {getattr(event, 'source', None)}")
+            if hasattr(event, 'content'):
+                print(f"[DEBUG] content: {getattr(event, 'content', '')[:100]}")
+            if isinstance(event, TextMessage):
+                raw_events.append(event)
+                print(f"\n--- Event --- Source: {event.source} ---")
+                print(f"Content:\n{event.content}")
+                print(f"--------------------------")
+    except RuntimeError as e:
+        if "No available speakers found" not in str(e):
+            raise
+    # 辅助打印所有event的source序列和content摘要
+    print("[DEBUG] all event sources:", [e.source for e in raw_events])
+    print("[DEBUG] all event contents:")
+    for e in raw_events:
+        print(f"  {e.source}: {e.content[:80]}")
+    # 验证最后一条消息是stop_agent
+    assert raw_events[-1].source == "stop_agent"
+    print("\n=== test_nexus_flow_with_condition_output 验证通过 ===")
 
 def test_build_safe_graphflow_with_two_agents(model_client):
     """测试 build_safe_graphflow 对两个 agent 的构建"""
