@@ -1,84 +1,127 @@
 import json
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, AsyncGenerator
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_core.models import ChatCompletionClient # Import needed type
 from ..config.parser import LLMConfig
+from autogen_agentchat.messages import TextMessage, BaseChatMessage
 
 # Define the structured output format for the JudgeAgent
 class JudgeDecision(BaseModel):
-    type: str = Field(..., description="The classified type of the task (e.g., TASK, QUICK, SEARCH, AMBIGUOUS).")
-    sop: Optional[str] = Field(None, description="The content or ID of the relevant SOP template if type is TASK and a template is found, otherwise null.")
-    reason: str = Field(..., description="A brief explanation for the classification decision.")
+    """任务判断结果。"""
+    type: str  # PLAN, SIMPLE, SEARCH, UNCLEAR
+    confidence: float  # 0.0 - 1.0
+    reason: str  # 判断原因
 
 
 class JudgeAgent(AssistantAgent):
-    """An agent specialized in analyzing task descriptions, classifying them,
-    and identifying relevant SOP templates."""
+    """任务分析智能体。
+    
+    负责快速分析任务类型，返回判断结果。
+    """
 
     def __init__(
         self,
-        model_client: ChatCompletionClient, # Expect a model client (Required first)
-        name: str = "TaskJudge", # Name after required args
-        sop_definitions: Optional[Dict[str, Any]] = None,
-        caller_name: Optional[str] = None, # Added caller context
-        is_system_logging_enabled: bool = True,
-        **kwargs,
+        model_client: ChatCompletionClient,
+        name: str,
+        sop_definitions: Dict[str, Any],
+        caller_name: str,
     ):
-        """
+        """初始化 JudgeAgent。
+
         Args:
-            model_client: The ChatCompletionClient instance.
-            name: Agent name.
-            sop_definitions: Pre-loaded SOP definitions.
-            caller_name: Name of the agent calling this judge.
-            is_system_logging_enabled: Whether to log system messages.
-            **kwargs: Additional arguments for AssistantAgent.
+            model_client: LLM 客户端
+            name: 智能体名称
+            sop_definitions: SOP 定义字典
+            caller_name: 调用者名称
         """
-        self._is_system_logging_enabled = is_system_logging_enabled
-        self.sop_definitions = sop_definitions or {}
+        self.sop_definitions = sop_definitions
         self.caller_name = caller_name
 
-        # Define the specific system prompt for the JudgeAgent
-        # SOP definitions are part of the prompt context
-        judge_system_prompt = f"""
-        You are a highly efficient task analyzer invoked by '{self.caller_name or 'another agent'}'.
+        # 构建系统提示
+        system_message = f"""
+        You are a highly efficient task analyzer invoked by '{caller_name}'.
         Your sole purpose is to analyze the given task description and classify its type.
         The possible types are:
-        - TASK: Requires a multi-step plan or Standard Operating Procedure (SOP).
-        - QUICK: Can be answered or executed directly in a single step.
-        - SEARCH: Requires web search or knowledge base lookup.
-        - AMBIGUOUS: The task description is unclear or lacks sufficient information.
+        - PLAN: Requires a multi-step plan or Standard Operating Procedure (SOP)
+        - SIMPLE: Can be handled directly without a plan
+        - SEARCH: Requires searching or retrieving information
+        - UNCLEAR: Task description is unclear or lacks necessary information
 
-        If you classify the type as TASK, you MUST check if any predefined SOP templates are relevant. Look for keywords or semantic matches in the following SOP definitions:
-        --- SOP Definitions ---
-        {json.dumps(self.sop_definitions, indent=2)}
-        --- End SOP Definitions ---
+        Available SOPs:
+        {json.dumps(list(sop_definitions.keys()), indent=2)}
 
-        Respond ONLY with a JSON object matching this schema:
+        You must respond in JSON format with the following structure:
         {{
-            "type": "TASK | QUICK | SEARCH | AMBIGUOUS",
-            "sop": "relevant_sop_id_or_content | null (required if type is TASK, null otherwise)",
-            "reason": "Your brief reasoning."
+            "type": "PLAN|SIMPLE|SEARCH|UNCLEAR",
+            "confidence": float,  # 0.0 to 1.0
+            "reason": string  # Brief explanation of your decision
         }}
-        Provide ONLY the JSON object in your response.
         """
+
+        logger.info(f"Initialized JudgeAgent: {name} (called by {caller_name})")
+        logger.debug(f"  Judge System Message Snippet: {system_message[:200]}...")
+        logger.debug(f"  Judge Model Client: {model_client}")
+        logger.debug(f"  Loaded SOP Definitions: {list(sop_definitions.keys())}")
 
         super().__init__(
             name=name,
-            system_message=judge_system_prompt.strip(),
-            model_client=model_client, # Pass the model client
-            # human_input_mode="NEVER", # Removed: Not a valid argument in newer autogen-agentchat
-            # JudgeAgent doesn't need external tools typically
-            **kwargs,
+            system_message=system_message,
+            model_client=model_client,
         )
 
-        logger.info(f"Initialized JudgeAgent: {self.name} (called by {self.caller_name or 'Unknown'})")
-        if self._is_system_logging_enabled:
-             logger.debug(f"  Judge System Message Snippet: {self._system_messages[0].content[:250]}...")
-        logger.debug(f"  Judge Model Client: {self._model_client}") # Log client object, use _model_client
-        logger.debug(f"  Loaded SOP Definitions: {list(self.sop_definitions.keys())}")
+    async def run(self, task: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """运行任务分析。
+
+        Args:
+            task: 任务描述
+
+        Returns:
+            判断结果
+        """
+        try:
+            # 分析任务
+            response = await self.llm_cached_aask(
+                task,
+                raise_on_timeout=True,
+            )
+
+            # 解析响应
+            try:
+                decision = JudgeDecision.parse_raw(response)
+                yield {
+                    "chat_message": TextMessage(
+                        content=decision.json(),
+                        source=self.name
+                    )
+                }
+            except Exception as e:
+                logger.error(f"Failed to parse JudgeAgent response: {e}")
+                yield {
+                    "chat_message": TextMessage(
+                        content=json.dumps({
+                            "type": "UNCLEAR",
+                            "confidence": 0.0,
+                            "reason": f"Failed to parse response: {str(e)}"
+                        }),
+                        source=self.name
+                    )
+                }
+
+        except Exception as e:
+            logger.error(f"Error in JudgeAgent.run: {e}")
+            yield {
+                "chat_message": TextMessage(
+                    content=json.dumps({
+                        "type": "UNCLEAR",
+                        "confidence": 0.0,
+                        "reason": f"Error during analysis: {str(e)}"
+                    }),
+                    source=self.name
+                )
+            }
 
     # No internal tools needed for basic prompt-based lookup
     # If complex SOP searching is needed, add a dedicated tool here

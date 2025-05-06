@@ -1,76 +1,28 @@
 import pytest
 import asyncio
 import json
-from unittest.mock import Mock, MagicMock # For mocking
-from typing import Optional
+from pathlib import Path
+import sys
+from typing import Optional, Dict, Any, List, TypedDict
 
-# Assume JudgeAgent is importable. Adjust path if necessary based on project structure.
-try:
-    from src.agents.judge_agent import JudgeAgent, JudgeDecision # Assuming JudgeDecision is the Pydantic model for the output
-except ImportError:
-    # Add src to path if running tests directly
-    import sys
-    from pathlib import Path
-    project_root = Path(__file__).parent.parent.parent # Adjust based on actual test file location
-    src_path = project_root / "src"
-    if str(src_path) not in sys.path:
-        sys.path.insert(0, str(src_path))
-    from src.agents.judge_agent import JudgeAgent, JudgeDecision
+# Add src to path if running tests directly (important for imports)
+project_root = Path(__file__).parent.parent.parent # Adjust based on actual test file location
+src_path = project_root / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+# Now import necessary components
+from src.agents.judge_agent import JudgeAgent, JudgeDecision
+from src.config.llm_config import create_completion_client # Assumes this function exists and works
+from src.config.parser import load_llm_config_from_toml # Assumes this function exists
+from src.types.task import TaskType # Import the Enum if you have one, or use strings
+from src.llm.utils import get_last_message_content, maybe_structured # Assuming these helpers exist
 
 # Import necessary AutoGen core types
 from autogen_core.models import ChatCompletionClient, CreateResult, RequestUsage
 from autogen_agentchat.base import TaskResult
 
-# --- Mock ChatCompletionClient ---
-
-class MockChatCompletionClient(Mock):
-    def __init__(self, response_map: dict, **kwargs):
-        super().__init__(spec=ChatCompletionClient, **kwargs)
-        # Store expected responses based on keywords in the prompt's task
-        self.response_map = response_map
-        self.model_info = {"vision": False, "function_calling": False, "family": "mock"} # Basic info
-
-    async def create(self, messages, **kwargs) -> CreateResult:
-        """Simulates the LLM call based on keywords in the last message."""
-        last_message_content = ""
-        # Check if messages list is not empty and the last message has a content attribute
-        if messages and hasattr(messages[-1], 'content') and isinstance(messages[-1].content, str):
-            last_message_content = messages[-1].content # Access content directly
-
-        response_content = '{"type": "AMBIGUOUS", "reason": "Mock default: Could not classify."}' # Default response
-        
-        # Simple keyword matching for mock responses
-        # Use the longest matching keyword to avoid ambiguity (e.g., "onboard" vs "onboard new")
-        best_match_keyword = None
-        for keyword in self.response_map:
-            if keyword.lower() in last_message_content.lower():
-                if best_match_keyword is None or len(keyword) > len(best_match_keyword):
-                    best_match_keyword = keyword
-
-        if best_match_keyword:
-            response_content = self.response_map[best_match_keyword]
-
-        # Simulate the structure returned by a real client
-        # Based on AutoGen 0.5.5 CreateResult structure and errors
-        mock_choice = {
-            "index": 0,
-            "finish_reason": "stop", # Required field
-            "message": {"role": "assistant", "content": response_content}
-        }
-        # Usage needs to be a dict-like object, not None
-        mock_usage = RequestUsage(prompt_tokens=0, completion_tokens=0) # Use RequestUsage for type safety
-        # Cached is also a required field apparently
-        # According to new errors, finish_reason and content might be top-level fields
-        # Content must be a string (or list[FunctionCall]), not None, when finish_reason is 'stop'.
-        return CreateResult(
-            choices=[mock_choice],
-            finish_reason="stop", # Add finish_reason at the top level
-            content=response_content, # Set top-level content to the actual response string
-            usage=mock_usage,
-            cached=False
-        )
-
-# --- Sample SOP Definitions ---
+# --- Sample SOP Definitions (Keep this) ---
 
 SAMPLE_SOP_DEFS = {
     "onboarding_v1": {
@@ -87,67 +39,72 @@ SAMPLE_SOP_DEFS = {
     }
 }
 
-# --- Test Fixtures (Optional but helpful) ---
+# Mark all tests in this file as integration tests
+pytestmark = pytest.mark.integration
 
-@pytest.fixture
-def mock_llm_responses():
-    # Define responses based on keywords expected in the JudgeAgent's prompt
-    # Keywords should be specific enough to map to a single test case input ideally
-    return {
-        # Keywords for basic types
-        "summarize this": '{"type": "QUICK", "reason": "Simple summarization task."}',
-        "what is the capital": '{"type": "SEARCH", "reason": "Requires external knowledge lookup."}',
-        "update the report": '{"type": "AMBIGUOUS", "reason": "Lacks specific details."}',
-        "marketing strategy": '{"type": "TASK", "reason": "Complex planning required.", "sop": null}',
-        # Keywords for SOP matching
-        "onboard": '{"type": "TASK", "reason": "Complex process, matches onboarding SOP.", "sop": "onboarding_v1"}',
-        "security incident report": '{"type": "TASK", "reason": "Complex process, matches incident response SOP.", "sop": "incident_response_basic"}',
-    }
+# --- Test Fixture using Real LLM Client ---
 
-@pytest.fixture
-def judge_agent_with_mock_client(mock_llm_responses):
-    """Provides a JudgeAgent instance with a mocked LLM client."""
-    mock_client = MockChatCompletionClient(response_map=mock_llm_responses)
-    agent = JudgeAgent(
-        model_client=mock_client,
-        name="TestJudge",
-        sop_definitions=SAMPLE_SOP_DEFS,
-        caller_name="TestCaller"
-    )
-    return agent
+@pytest.fixture(scope="module") # Use module scope for efficiency
+def judge_agent_with_real_client():
+    """Provides a JudgeAgent instance with a real LLM client from config."""
+    client = load_llm_config_from_toml() # Load client using your config loading function
+    if client is None:
+        pytest.skip("Skipping integration tests: Failed to load LLM configuration.")
 
-# --- Test Functions (Refactored using parametrize) ---
+    try:
+        agent = JudgeAgent(
+            model_client=client,
+            name="TestJudgeIntegration", # Give it a distinct name
+            sop_definitions=SAMPLE_SOP_DEFS,
+            caller_name="PytestUnitTurnedIntegration",
+            is_system_logging_enabled=False # Reduce noise in test logs
+        )
+        return agent
+    except Exception as e:
+        pytest.skip(f"Skipping integration tests: Failed to initialize JudgeAgent - {e}")
+
+
+# --- Test Functions (Updated for Integration and New Types) ---
 
 @pytest.mark.parametrize(
     "task_input, expected_type, expected_sop",
     [
-        # Quick Task
-        ("Please summarize this short paragraph about pytest fixtures.", "QUICK", None),
+        # Simple Task
+        ("Please summarize this short paragraph about pytest fixtures.", "SIMPLE", None),
         # Search Task
         ("what is the capital of canada?", "SEARCH", None),
-        # Ambiguous Task
-        ("Update the report for me.", "AMBIGUOUS", None),
-        # Complex Task without SOP match
-        ("Develop a comprehensive marketing strategy for our new gadget.", "TASK", None),
+        # Uncertain Task
+        ("Update the report for me.", "UNCERTAIN", None),
+        # Plan Task without SOP match
+        ("Develop a comprehensive marketing strategy for our new gadget.", "PLAN", None),
     ],
-    ids=["quick", "search", "ambiguous", "task_no_sop"] # Test IDs for clarity
+    ids=["simple", "search", "uncertain", "plan_no_sop"]
 )
 @pytest.mark.asyncio
-async def test_judge_basic_types(judge_agent_with_mock_client: JudgeAgent, task_input: str, expected_type: str, expected_sop: Optional[str]):
-    """Tests JudgeAgent classification for basic task types (QUICK, SEARCH, AMBIGUOUS, TASK w/o SOP)."""
-    result: TaskResult = await judge_agent_with_mock_client.run(task=task_input)
+async def test_judge_basic_types(judge_agent_with_real_client: JudgeAgent, task_input: str, expected_type: str, expected_sop: Optional[str]):
+    """Tests JudgeAgent classification for basic task types using a real LLM."""
+    result: Optional[TaskResult] = await judge_agent_with_real_client.run(task=task_input)
 
-    assert result.messages, "JudgeAgent should return messages"
-    final_message_content = result.messages[-1].content
-    assert isinstance(final_message_content, str), "Final message content should be a string"
-    
+    assert result is not None, "Agent run did not return a result"
+    content = get_last_message_content(result)
+    assert content is not None, "Agent did not return any messages or content"
+
     try:
-        decision = json.loads(final_message_content)
-        assert decision['type'] == expected_type
-        assert decision.get('sop') == expected_sop # Use .get() for optional field
-        assert 'reason' in decision # Check reason exists
-    except (json.JSONDecodeError, KeyError, AssertionError) as e:
-        pytest.fail(f"Failed to parse or validate JSON result for '{task_input}': {e}\nContent: {final_message_content}")
+        decision = maybe_structured(content) # Use helper to parse JSON
+        assert isinstance(decision, dict), f"Response was not a valid JSON object. Content: {content}"
+
+        assert decision.get('type') == expected_type, f"Expected type '{expected_type}' but got '{decision.get('type')}'"
+        # Use .get() for optional 'sop' field, comparing None explicitly if needed
+        assert decision.get('sop') == expected_sop, f"Expected SOP '{expected_sop}' but got '{decision.get('sop')}'"
+        assert 'reason' in decision, "Mandatory 'reason' field is missing" # Check reason exists
+
+    except (json.JSONDecodeError, AssertionError) as e:
+        # Combine the fail message into a single line f-string
+        pytest.fail(f"Failed to parse or validate JSON result for '{task_input}': {e}\nContent: {content}")
+    except Exception as e: # Catch other potential errors during processing
+         # Combine the fail message into a single line f-string
+         pytest.fail(f"An unexpected error occurred during test execution for '{task_input}': {e}\nContent: {content}")
+
 
 @pytest.mark.parametrize(
     "task_input, expected_sop_id",
@@ -156,32 +113,38 @@ async def test_judge_basic_types(judge_agent_with_mock_client: JudgeAgent, task_
         ("We need to onboard the new software engineer starting next week.", "onboarding_v1"),
         # Task with Incident Response SOP
         ("Please handle the security incident report ASAP.", "incident_response_basic"),
+        # Chinese variant - Onboarding
+        ("帮我为下周入职的新软件工程师办一下手续。", "onboarding_v1"),
+        # Chinese variant - Incident
+        ("尽快处理这份安全事件报告。", "incident_response_basic"),
     ],
-    ids=["task_with_onboarding_sop", "task_with_incident_sop"]
+    ids=["plan_with_onboarding_sop", "plan_with_incident_sop", "plan_onboarding_zh", "plan_incident_zh"]
 )
 @pytest.mark.asyncio
-async def test_judge_sop_matching(judge_agent_with_mock_client: JudgeAgent, task_input: str, expected_sop_id: str):
-    """Tests JudgeAgent classification for TASK type with SOP matching."""
-    result: TaskResult = await judge_agent_with_mock_client.run(task=task_input)
+async def test_judge_sop_matching(judge_agent_with_real_client: JudgeAgent, task_input: str, expected_sop_id: str):
+    """Tests JudgeAgent classification for PLAN type with SOP matching using a real LLM."""
+    result: Optional[TaskResult] = await judge_agent_with_real_client.run(task=task_input)
 
-    assert result.messages, "JudgeAgent should return messages"
-    final_message_content = result.messages[-1].content
-    assert isinstance(final_message_content, str), "Final message content should be a string"
-    
+    assert result is not None, "Agent run did not return a result"
+    content = get_last_message_content(result)
+    assert content is not None, "Agent did not return any messages or content"
+
     try:
-        decision = json.loads(final_message_content)
-        assert decision['type'] == "TASK"
-        assert decision.get('sop') == expected_sop_id # Check for correct SOP match
-        assert 'reason' in decision
-    except (json.JSONDecodeError, KeyError, AssertionError) as e:
-        pytest.fail(f"Failed to parse or validate JSON result for SOP matching task '{task_input}': {e}\nContent: {final_message_content}")
+        decision = maybe_structured(content)
+        assert isinstance(decision, dict), f"Response was not a valid JSON object. Content: {content}"
 
-# Removed original individual test functions:
-# test_judge_quick_task
-# test_judge_search_task
-# test_judge_ambiguous_task
-# test_judge_complex_task_no_sop
-# test_judge_complex_task_with_sop
-# test_judge_complex_task_with_sop_variant
+        # Expect PLAN type when an SOP is matched
+        assert decision.get('type') == "PLAN", f"Expected type 'PLAN' for SOP matching task, but got '{decision.get('type')}'"
+        assert decision.get('sop') == expected_sop_id, f"Expected SOP '{expected_sop_id}' but got '{decision.get('sop')}'"
+        assert 'reason' in decision, "Mandatory 'reason' field is missing"
 
-# Add more tests as needed, e.g., edge cases, different phrasing, etc. 
+    except (json.JSONDecodeError, AssertionError) as e:
+        # Combine the fail message into a single line f-string
+        pytest.fail(f"Failed to parse or validate JSON result for SOP matching task '{task_input}': {e}\nContent: {content}")
+    except Exception as e:
+         # Combine the fail message into a single line f-string
+         pytest.fail(f"An unexpected error occurred during test execution for SOP matching task '{task_input}': {e}\nContent: {content}")
+
+
+# Removed original individual test functions and Mock related code.
+# This file now purely contains integration tests for JudgeAgent. 

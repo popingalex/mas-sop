@@ -50,7 +50,7 @@ class TeamConfig(BaseModel):
     global_settings: Optional[GlobalSettings] = None
     agents: List[AgentConfig] # Now strictly list of AgentConfig
 
-def load_config(filepath: str) -> TeamConfig:
+def load_team_config(filepath: str) -> TeamConfig:
     """Loads and parses the team's YAML configuration file using Pydantic models."""
     yaml = YAML(typ='safe')
     logger.info(f"Attempting to load team configuration from '{filepath}'...")
@@ -84,7 +84,7 @@ def load_config(filepath: str) -> TeamConfig:
 
 _config_cache = None
 
-def load_config() -> Dict[str, Any]:
+def load_llm_config() -> Dict[str, Any]:
     global _config_cache
     if _config_cache is not None:
         return _config_cache
@@ -116,7 +116,7 @@ def load_config() -> Dict[str, Any]:
 
 def load_llm_config_from_toml(provider: str = "ds") -> Optional[OpenAIChatCompletionClient]:
     try:
-        config = load_config()
+        config = load_llm_config()
         if "llm" not in config or provider not in config["llm"]:
             logger.error(f"Missing LLM configuration for provider '{provider}'")
             return None
@@ -138,7 +138,7 @@ if __name__ == '__main__':
         script_dir = os.path.dirname(__file__)
         config_path = os.path.join(script_dir, '../../teams/safe-sop/config.yaml')
         logger.info(f"Loading example team configuration file: {config_path}")
-        loaded_team_config: TeamConfig = load_config(config_path) # Type hint for clarity
+        loaded_team_config: TeamConfig = load_team_config(config_path) # Type hint for clarity
 
         print("\n--- Team Config Load Result (Partial) ---")
         print(f"Team Name: {loaded_team_config.team_name}")
