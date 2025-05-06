@@ -1,4 +1,5 @@
-from typing import TypedDict, Any, Optional
+from typing_extensions import TypedDict
+from typing import Any, Optional
 
 class ResponseType(TypedDict):
     """标准工具响应类型。"""

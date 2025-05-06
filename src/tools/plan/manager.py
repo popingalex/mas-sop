@@ -1,4 +1,5 @@
-from typing import Dict, List, Optional, Annotated, Literal, TypedDict, Union, get_args
+from typing import Dict, List, Optional, Annotated, Literal, Union, get_args
+from typing_extensions import TypedDict
 from uuid import uuid4, UUID
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from datetime import datetime

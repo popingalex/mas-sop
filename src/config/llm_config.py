@@ -34,7 +34,7 @@ def get_model_info(provider: str) -> ModelInfo:
 def create_completion_client(provider: str, config: Dict[str, Any]) -> OpenAIChatCompletionClient:
     model_info = get_model_info(provider)
     logger.info(f"Creating completion client for provider '{provider}' with model_info: {model_info}")
-    return OpenAIChatCompletionClient(**config, model_info=model_info, response_format=ResponseFormatJSONObject(type="json_object"))
+    return OpenAIChatCompletionClient(**config, model_info=model_info)
 
 def create_unstructured_completion_client(provider: str, config: Dict[str, Any]) -> OpenAIChatCompletionClient:
     """创建不强制使用结构化输出的 LLM 客户端。

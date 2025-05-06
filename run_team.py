@@ -17,10 +17,11 @@ from autogen_core.models import ChatCompletionClient # Keep for type hints if ne
 # Assuming the script is run from the project root
 try:
     # This allows running from root with 'python run_team.py ...'
-    from src.config.parser import load_team_config, TeamConfig, AgentConfig
-    from src.agents.base_agent import SOPAgent # Assuming SOPAgent is the primary type for now
+    from src.config.parser import load_team_config, TeamConfig, AgentConfig, load_llm_config_from_toml
+    from src.agents.sop_agent import SOPAgent  # 修正为sop_agent
     from src.tools.plan.manager import PlanManager # Assuming PlanManager path
     from src.tools.artifact_manager import ArtifactManager # Assuming ArtifactManager path
+    from src.workflows.graphflow import build_safe_graphflow
     # TODO: Import logging setup utility if available
     # from src.utils.logging import setup_logging
 except ImportError as e:
@@ -33,14 +34,28 @@ except ImportError as e:
         sys.path.insert(0, str(src_path))
         logger.info(f"Added {src_path} to sys.path")
         # Retry imports WITHOUT client
-        from src.config.parser import load_team_config, TeamConfig, AgentConfig
-        from src.agents.base_agent import SOPAgent
+        from src.config.parser import load_team_config, TeamConfig, AgentConfig, load_llm_config_from_toml
+        from src.agents.sop_agent import SOPAgent  # 修正为sop_agent
         from src.tools.plan.manager import PlanManager
         from src.tools.artifact_manager import ArtifactManager
+        from src.workflows.graphflow import build_safe_graphflow
         # from src.utils.logging import setup_logging
 
 # --- Console Import ---
 from autogen_agentchat.ui import Console # Import Console
+
+def instantiate_agents(team_config, plan_manager, artifact_manager, model_client):
+    agents = []
+    for agent_config in team_config.agents:
+        agent = SOPAgent(
+            name=agent_config.name,
+            agent_config=agent_config,
+            model_client=model_client,
+            plan_manager=plan_manager,
+            artifact_manager=artifact_manager
+        )
+        agents.append(agent)
+    return agents
 
 async def main():
     # --- 1. Parse Arguments ---
@@ -60,43 +75,27 @@ async def main():
     # --- 3. Initialize Managers ---
     plan_manager = PlanManager()
     artifact_manager = ArtifactManager()
+    model_client = load_llm_config_from_toml()  # 统一用配置加载
 
-    # --- 4. Create Entry Agent ---
-    entry_agent = None
-    for agent_config in team_config.agents:
-        if agent_config.is_entry_point:
-            entry_agent = SOPAgent(
-                name=agent_config.name,
-                agent_config=agent_config,
-                model_client=None,  # TODO: Initialize model client
-                plan_manager=plan_manager,
-                artifact_manager=artifact_manager
-            )
-            break
+    # 实例化所有Agent
+    agents = instantiate_agents(team_config, plan_manager, artifact_manager, model_client)
 
-    if not entry_agent:
-        logger.error("No entry point agent found in team configuration")
-        return
-        
-    # --- 5. Create Initial Message ---
+    # 构建GraphFlow
+    flow = build_safe_graphflow(team_config=team_config._replace(agents=agents))
+
+    # --- 4. Create Initial Message ---
     initial_message = TextMessage(
         content=args.initial_message,
         source="user"
     )
 
-    # --- 6. Start Workflow ---
+    # --- 5. Start Workflow ---
     try:
         # Create cancellation token
         cancellation_token = CancellationToken()
         
-        # Process the initial message
-        async for response in entry_agent.on_messages_stream(
-            messages=[initial_message],
-            cancellation_token=cancellation_token
-        ):
-            if hasattr(response, 'chat_message'):
-                logger.info(f"Response from {response.chat_message.source}: {response.chat_message.content}")
-        
+        # 启动GraphFlow团队协作
+        await Console(flow.run_stream(task=initial_message, cancellation_token=cancellation_token))
         logger.success("Workflow completed successfully.")
 
     except Exception as e:

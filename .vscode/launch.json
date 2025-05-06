@@ -20,6 +20,26 @@
             "justMyCode": false,
             "console": "integratedTerminal",
             "purpose": ["debug-test"]
+        },
+        {
+            "name": "Python: GraphFlow Message Flow Test",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "-v",
+                "-s",
+                "tests/workflows/test_graphflow_core.py::test_message_flow"
+            ],
+            "python": "${workspaceFolder}/venv/bin/python",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "PYTEST_ADDOPTS": "--no-cov"
+            },
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "purpose": ["debug-test"]
         }
     ]
 } 

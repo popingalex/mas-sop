@@ -3,7 +3,8 @@ description:
 globs: 
 alwaysApply: true
 ---
-# 使用Autogen时需要遵守以下规则
+# AutoGen注意事项
+## 依赖管理
 - 版本以```requirements.txt```为准
 - 每次我纠正你autogen的错误依赖时，都应该追加规则到这个rule文件
 - 正确依赖 
@@ -31,3 +32,6 @@ alwaysApply: true
     3. https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/examples/
     4. https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/migration-guide.html
     5. https://github.com/microsoft/autogen/tree/main/python
+
+## 常见问题
+- 使用GraphFlow如果第一个节点没有入边，则不需要set_entry_point，否则第一个节点会执行两次

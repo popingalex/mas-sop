@@ -3,7 +3,8 @@ import asyncio
 import json
 from pathlib import Path
 import sys
-from typing import Optional, Dict, Any, List, TypedDict
+from typing import Optional, Dict, Any, List
+from typing_extensions import TypedDict
 
 # Add src to path if running tests directly (important for imports)
 project_root = Path(__file__).parent.parent.parent # Adjust based on actual test file location

@@ -1,193 +1,286 @@
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, List, TypedDict
+from typing import Dict, Any, Optional, List, Literal
+from typing_extensions import TypedDict
 from loguru import logger
 from ruamel.yaml import YAML, YAMLError
 import io
 from datetime import datetime
 from .types import ResponseType, success, error
 from .errors import ErrorMessages
+from uuid import UUID, uuid4
+from pydantic import BaseModel, Field, ValidationError, field_validator
+import json
 
 # --- REMOVED Global in-memory storage ---
 # _artifact_storage: Dict[str, Any] = {}
 
-class Artifact(TypedDict, total=False):
-    """制品数据结构
-    
-    必需字段：
-    - id: 制品ID（文件名）
-    - content: 制品内容（当前仅支持字符串）
-    - created_at: 创建时间
-    - format: 存储格式，当前仅支持 'yaml'
-    
-    可选字段：
-    - description: 制品描述
-    - event_id: 关联的事件ID
-    - path: 文件路径
-    """
-    id: str  # 制品ID（文件名）
-    content: str  # 制品内容
-    created_at: datetime  # 创建时间
-    format: str  # 存储格式
-    description: str  # 制品描述
-    event_id: str  # 关联的事件ID
-    path: str  # 文件路径
+# --- 统一的 Artifact 数据结构 ---
+class Artifact(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    title: str
+    content: Any
+    tags: List[str] = []
+    created_at: datetime = Field(default_factory=datetime.now)
+    author: str
+    description: Optional[str] = None
+    path: Optional[str] = None  # 仅多文件模式下记录物理路径
+
+    @field_validator('title', 'author')
+    @classmethod
+    def not_empty(cls, v, info):
+        if not v or not v.strip():
+            raise ValueError(f"{info.field_name}不能为空")
+        return v
 
 class ArtifactManager:
     """管理制品，将其保存为 YAML 文件。"""
 
-    def __init__(self, base_dir: Optional[Path | str] = None):
+    def __init__(
+        self,
+        base_dir: str | Path = ".",
+        storage_mode: Literal["single", "multi"] = "single",
+        storage_format: Literal["yaml", "json"] = "yaml"
+    ):
         """初始化制品管理器。
 
         Args:
             base_dir: 制品存储目录，如果不指定则使用当前目录下的 'artifacts' 子目录
+            storage_mode: 存储模式，"single" 表示单文件模式，"multi" 表示多文件模式
+            storage_format: 存储格式，"yaml" 表示 YAML 格式，"json" 表示 JSON 格式
         """
-        if base_dir:
-            self._base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir)
+        self.storage_mode = storage_mode
+        self.storage_format = storage_format
+        self.yaml = YAML(typ='safe')
+        self.yaml.indent(mapping=2, sequence=4, offset=2)
+        self.yaml.preserve_quotes = True
+
+        if self.storage_mode == "single":
+            self.artifact_file = self.base_dir / f"artifact.{self.storage_format}"
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+            if not self.artifact_file.exists():
+                self._save_all([])
         else:
-            self._base_dir = Path("artifacts")
-        
+            self.artifact_dir = self.base_dir / "artifact"
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- 单文件模式下的全部读写 ---
+    def _load_all(self) -> List[Artifact]:
+        if not self.artifact_file.exists():
+            return []
         try:
-            self._base_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"制品管理器初始化完成，基础目录：{self._base_dir.resolve()}")
-        except OSError as e:
-            logger.error(f"创建制品目录失败 {self._base_dir}: {e}")
-            raise
+            if self.storage_format == "yaml":
+                with open(self.artifact_file, 'r', encoding='utf-8') as f:
+                    data = self.yaml.load(f) or []
+            else:
+                with open(self.artifact_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            return [Artifact.model_validate(a) for a in data]
+        except Exception as e:
+            logger.error(f"加载artifact文件失败: {e}")
+            return []
 
-        self._yaml = YAML(typ='safe')
-        self._yaml.indent(mapping=2, sequence=4, offset=2)
-        self._yaml.preserve_quotes = True 
-
-    def _get_artifact_path(self, name: str, event_id: Optional[str] = None) -> Path:
-        """构建制品文件路径。"""
-        safe_name = name.replace('/', '_').replace('\\', '_').replace(':', '_')
-        filename = f"{safe_name}.yaml"
-        if event_id:
-            safe_event_id = event_id.replace('/', '_').replace('\\', '_').replace(':', '_')
-            filename = f"{safe_event_id}___{safe_name}.yaml"
-        return self._base_dir / filename
-
-    async def save_artifact(
-        self, 
-        content: str,
-        description: Optional[str] = None,
-        name: Optional[str] = None,
-        event_id: Optional[str] = None,
-        preferred_format: str = 'yaml'
-    ) -> ResponseType:
-        """保存制品到文件。
-
-        Args:
-            content: 制品内容（当前仅支持字符串）
-            description: 用于生成文件名的描述（如果未提供name）
-            name: 制品的逻辑名称（用于生成文件名），优先级高于description
-            event_id: 可选的命名空间标识
-            preferred_format: 目前仅支持'yaml'
-
-        Note:
-            - name 和 description 至少需要提供一个
-            - 如果同时提供，description 会作为注释保存
-            - 文件名会自动处理特殊字符
-        """
-        if preferred_format.lower() != 'yaml':
-            return error(ErrorMessages.ARTIFACT_FORMAT_UNSUPPORTED.format(format=preferred_format))
-
-        if not name and not description:
-            return error(ErrorMessages.ARTIFACT_NAME_REQUIRED)
-
-        artifact_name = name if name else description
-        if not artifact_name:
-            return error(ErrorMessages.ARTIFACT_NAME_INVALID)
-
-        file_path = self._get_artifact_path(artifact_name, event_id)
-        logger.debug(f"正在保存制品 '{artifact_name}' (Event: {event_id}) 到文件: {file_path}")
-
+    def _save_all(self, artifacts: List[Artifact]):
+        data = [a.model_dump(mode='json') for a in artifacts]
         try:
-            # 构建制品数据
-            artifact: Artifact = {
-                "id": file_path.name,
-                "content": content,
-                "created_at": datetime.now(),
-                "format": "yaml"
-            }
-            if description:
-                artifact["description"] = description
-            if event_id:
-                artifact["event_id"] = event_id
+            if self.storage_format == "yaml":
+                with open(self.artifact_file, 'w', encoding='utf-8') as f:
+                    self.yaml.dump(data, f)
+            else:
+                with open(self.artifact_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存artifact文件失败: {e}")
 
-            # 保存到文件
-            with open(file_path, 'w', encoding='utf-8') as f:
-                self._yaml.dump(artifact, f)
-            
-            logger.info(f"制品 '{artifact_name}' 已保存为 {artifact['id']}")
-            # 返回不包含 content 的制品数据
-            artifact_info = {k: v for k, v in artifact.items() if k != 'content'}
-            return success("制品保存成功", data=artifact_info)
+    # --- 多文件模式下的单个读写 ---
+    def _get_artifact_path(self, artifact_id: UUID) -> Path:
+        ext = 'yaml' if self.storage_format == 'yaml' else 'json'
+        return self.artifact_dir / f"{artifact_id}.{ext}"
 
-        except (OSError, YAMLError, TypeError) as e:
-            logger.exception(f"保存制品 '{artifact_name}' 到 {file_path} 失败: {e}")
-            return error(str(e))
-
-    async def load_artifact(self, artifact_id: str) -> ResponseType:
-        """根据ID（文件名）加载制品。
-
-        Args:
-            artifact_id: 制品ID（文件名，如 'report.yaml' 或 'event1__report.yaml'）
-        """
-        file_path = self._base_dir / artifact_id
-        logger.debug(f"尝试从文件加载制品: {file_path}")
-
-        if not file_path.exists() or not file_path.is_file():
-            return error(ErrorMessages.NOT_FOUND.format(resource="制品", id_str=artifact_id))
-
+    def _load_one(self, artifact_id: UUID) -> Optional[Artifact]:
+        file_path = self._get_artifact_path(artifact_id)
+        if not file_path.exists():
+            return None
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                artifact = self._yaml.load(f)
-            logger.info(f"成功加载制品: {artifact_id}")
-            return success("制品加载成功", data=artifact)
-        except (OSError, YAMLError) as e:
-            logger.exception(f"从 {file_path} 加载或解析制品失败: {e}")
-            return error(str(e))
+            if self.storage_format == "yaml":
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = self.yaml.load(f)
+            else:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            return Artifact.model_validate(data)
+        except Exception as e:
+            logger.error(f"加载artifact文件失败: {e}")
+            return None
 
-    async def list_artifacts(self, event_id: Optional[str] = None) -> ResponseType:
-        """列出可用的制品。
-
-        Args:
-            event_id: 可选的事件ID过滤器，如果提供则只返回该事件相关的制品
-        """
-        logger.debug(f"列出 {self._base_dir} 中的制品 (Event 过滤: {event_id})")
-        artifacts = []
+    def _save_one(self, artifact: Artifact):
+        file_path = self._get_artifact_path(artifact.id)
+        data = artifact.model_dump(mode='json')
         try:
-            for item in self._base_dir.iterdir():
-                if item.is_file() and item.suffix.lower() == '.yaml':
-                    if event_id:
-                        safe_event_id = event_id.replace('/', '_').replace('\\', '_').replace(':', '_')
-                        prefix = f"{safe_event_id}__"
-                        if item.name.startswith(prefix):
-                            with open(item, 'r', encoding='utf-8') as f:
-                                artifact = self._yaml.load(f)
-                                # 不返回内容
-                                if 'content' in artifact:
-                                    del artifact['content']
-                                artifacts.append(artifact)
-                    else:
-                        with open(item, 'r', encoding='utf-8') as f:
-                            artifact = self._yaml.load(f)
-                            # 不返回内容
-                            if 'content' in artifact:
-                                del artifact['content']
-                            artifacts.append(artifact)
-            return success("获取制品列表成功", data=artifacts)
-        except OSError as e:
-            logger.error(f"列出制品失败 {self._base_dir}: {e}")
-            return error(str(e))
-         
+            if self.storage_format == "yaml":
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    self.yaml.dump(data, f)
+            else:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存artifact文件失败: {e}")
+
+    # --- CRUD 接口 ---
+    def create_artifact(self, title: str, content: Any, author: str, tags: Optional[List[str]] = None, description: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            artifact = Artifact(title=title, content=content, author=author, tags=tags or [], description=description)
+            if self.storage_mode == "single":
+                artifacts = self._load_all()
+                artifacts.append(artifact)
+                self._save_all(artifacts)
+            else:
+                self._save_one(artifact)
+            return {"success": True, "data": artifact.model_dump(mode='json')}
+        except (ValidationError, ValueError) as ve:
+            return {"success": False, "error": str(ve)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_artifact(self, artifact_id: str) -> Dict[str, Any]:
+        try:
+            uuid_obj = UUID(artifact_id)
+            if self.storage_mode == "single":
+                artifacts = self._load_all()
+                for a in artifacts:
+                    if a.id == uuid_obj:
+                        return {"success": True, "data": a.model_dump(mode='json')}
+                return {"success": False, "error": "未找到指定ID的artifact"}
+            else:
+                artifact = self._load_one(uuid_obj)
+                if artifact:
+                    return {"success": True, "data": artifact.model_dump(mode='json')}
+                return {"success": False, "error": "未找到指定ID的artifact"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def list_artifacts(self, tags: Optional[List[str]] = None, keywords: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            if self.storage_mode == "single":
+                artifacts = self._load_all()
+            else:
+                artifacts = []
+                for file in self.artifact_dir.glob(f"*.{self.storage_format}"):
+                    artifact = self._load_one(UUID(file.stem))
+                    if artifact:
+                        artifacts.append(artifact)
+            # 过滤
+            if tags:
+                tag_set = set(tags)
+                artifacts = [a for a in artifacts if tag_set.issubset(set(a.tags))]
+            if keywords:
+                kw = keywords.lower()
+                artifacts = [a for a in artifacts if kw in a.title.lower() or (isinstance(a.content, str) and kw in a.content.lower())]
+            return {"success": True, "data": [a.model_dump(mode='json') for a in artifacts]}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def update_artifact(self, artifact_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            uuid_obj = UUID(artifact_id)
+            if self.storage_mode == "single":
+                artifacts = self._load_all()
+                for idx, a in enumerate(artifacts):
+                    if a.id == uuid_obj:
+                        updated = a.model_copy(update=update_data)
+                        artifacts[idx] = updated
+                        self._save_all(artifacts)
+                        return {"success": True, "data": updated.model_dump(mode='json')}
+                return {"success": False, "error": "未找到指定ID的artifact"}
+            else:
+                artifact = self._load_one(uuid_obj)
+                if not artifact:
+                    return {"success": False, "error": "未找到指定ID的artifact"}
+                updated = artifact.model_copy(update=update_data)
+                self._save_one(updated)
+                return {"success": True, "data": updated.model_dump(mode='json')}
+        except ValidationError as ve:
+            return {"success": False, "error": str(ve)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def delete_artifact(self, artifact_id: str) -> Dict[str, Any]:
+        try:
+            uuid_obj = UUID(artifact_id)
+            if self.storage_mode == "single":
+                artifacts = self._load_all()
+                new_artifacts = [a for a in artifacts if a.id != uuid_obj]
+                if len(new_artifacts) == len(artifacts):
+                    return {"success": False, "error": "未找到指定ID的artifact"}
+                self._save_all(new_artifacts)
+                return {"success": True}
+            else:
+                file_path = self._get_artifact_path(uuid_obj)
+                if file_path.exists():
+                    file_path.unlink()
+                    return {"success": True}
+                return {"success": False, "error": "未找到指定ID的artifact"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # --- 导入导出功能 ---
+    def import_artifact_from_file(self, file_path: str) -> Dict[str, Any]:
+        try:
+            path = Path(file_path)
+            if path.suffix == ".yaml":
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = self.yaml.load(f)
+            elif path.suffix == ".json":
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            else:
+                return {"success": False, "error": "仅支持yaml/json文件"}
+            artifact = Artifact.model_validate(data)
+            if self.storage_mode == "single":
+                artifacts = self._load_all()
+                artifacts.append(artifact)
+                self._save_all(artifacts)
+            else:
+                self._save_one(artifact)
+            return {"success": True, "data": artifact.model_dump(mode='json')}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def export_artifact_to_file(self, artifact_id: str, file_path: str) -> Dict[str, Any]:
+        try:
+            uuid_obj = UUID(artifact_id)
+            if self.storage_mode == "single":
+                artifacts = self._load_all()
+                artifact = next((a for a in artifacts if a.id == uuid_obj), None)
+            else:
+                artifact = self._load_one(uuid_obj)
+            if not artifact:
+                return {"success": False, "error": "未找到指定ID的artifact"}
+            path = Path(file_path)
+            data = artifact.model_dump(mode='json')
+            if path.suffix == ".yaml":
+                with open(path, 'w', encoding='utf-8') as f:
+                    self.yaml.dump(data, f)
+            elif path.suffix == ".json":
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            else:
+                return {"success": False, "error": "仅支持yaml/json文件"}
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def tool_list(self) -> List[str]:
         """返回工具列表。"""
         return [
-            "save_artifact",
-            "load_artifact",
-            "list_artifacts"
+            "create_artifact",
+            "get_artifact",
+            "list_artifacts",
+            "update_artifact",
+            "delete_artifact",
+            "import_artifact_from_file",
+            "export_artifact_to_file"
         ]
 
 # --- Placeholder for future Plan Manager Client ---
