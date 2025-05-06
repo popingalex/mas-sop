@@ -6,13 +6,6 @@ from src.config.parser import load_llm_config_from_toml
 from src.workflows.graphflow import build_safe_graphflow
 from typing import Dict, Any, List
 
-# 完全通用的、精简的系统提示词模板，全局共享，包含 agent_name 占位符
-simple_prompt = """\
-# 按以下格式回复
-名字: {agent_name}
-来源: 如果是第一条消息填"user"；如果是其他agent发送的消息填发送者名字；否则填"无"
-分析: 解释你判断来源的依据
-输出: 你的处理结果"""
 
 def parse_message(msg: TextMessage) -> Dict[str, str]:
     """简单解析带冒号的键值对消息"""
@@ -40,6 +33,14 @@ def parse_message(msg: TextMessage) -> Dict[str, str]:
         
     return result
 
+# 通用的基础提示词模板
+base_prompt = """\
+# 按以下格式回复
+名字: {agent_name}
+来源: 如果是第一条消息填"user"；如果是其他agent发送的消息填发送者名字；否则填"无"
+分析: 解释你判断来源的依据
+输出: {output_desc}"""
+
 @pytest.fixture
 def model_client():
     """创建LLM客户端"""
@@ -47,21 +48,25 @@ def model_client():
 
 @pytest.mark.asyncio
 async def test_sequence_flow(model_client):
+    sequence_prompt = base_prompt.format(
+        output_desc="空着就行"
+    )
+
     agent_a = AssistantAgent(
         name="agent_a",
-        system_message=simple_prompt.format(agent_name="agent_a"),
+        system_message=sequence_prompt.format(agent_name="agent_a"),
         model_client=model_client
     )
     
     agent_b = AssistantAgent(
         name="agent_b",
-        system_message=simple_prompt.format(agent_name="agent_b"),
+        system_message=sequence_prompt.format(agent_name="agent_b"),
         model_client=model_client
     )
     
     agent_c = AssistantAgent(
         name="agent_c",
-        system_message=simple_prompt.format(agent_name="agent_c"),
+        system_message=sequence_prompt.format(agent_name="agent_c"),
         model_client=model_client
     )
     
@@ -117,6 +122,136 @@ async def test_sequence_flow(model_client):
     assert parsed_messages[2]["名字"] == "agent_c" and parsed_messages[2]["来源"] == "agent_b"
 
     print("\n=== test_sequence_flow 验证通过 ===")
+
+@pytest.mark.asyncio
+async def test_nexus_flow(model_client, need_stop_agent: bool = True):
+    worker_prompt = base_prompt.format(
+        output_desc="空着就行"
+    )
+
+    # 定义worker信息
+    worker_info = {
+        "worker_a": "擅长分析和规划，适合处理需要思考的任务",
+        "worker_b": "擅长执行和实现，适合处理具体的操作任务"
+    }
+    
+    coordinator = AssistantAgent(
+        name="coordinator",
+        system_message=base_prompt.format(
+            agent_name="coordinator",
+            output_desc=f"""你的处理结果。作为coordinator，你需要：
+1. 可选的worker有: {', '.join(worker_info.keys())}
+2. 每个worker的特点是:
+{chr(10).join(f'   - {name}: {desc}' for name, desc in worker_info.items())}
+3. 根据任务内容选择合适的worker
+4. 在输出中说明选择了哪个worker及选择原因
+5. 如果已完成3轮循环，包含"DONE"；否则包含"CONTINUE"。"""
+        ),
+        model_client=model_client
+    )
+    
+    worker_a = AssistantAgent(
+        name="worker_a",
+        system_message=worker_prompt.format(agent_name="worker_a"),
+        model_client=model_client
+    )
+    
+    worker_b = AssistantAgent(
+        name="worker_b",
+        system_message=worker_prompt.format(agent_name="worker_b"),
+        model_client=model_client
+    )
+    
+    participants = [coordinator, worker_a, worker_b]
+    
+    # 根据需要添加stop_agent
+    if need_stop_agent:
+        stop_agent = AssistantAgent(
+            name="stop_agent",
+            system_message=base_prompt.format(
+                agent_name="stop_agent",
+                output_desc="确认任务已完成，流程结束。"
+            ),
+            model_client=model_client
+        )
+        participants.append(stop_agent)
+    
+    # 构建线性流图
+    builder = DiGraphBuilder()
+    builder.add_node(coordinator)  # coordinator 作为起始节点
+    builder.add_node(worker_a)
+    builder.add_node(worker_b)
+    
+    # 设置起始节点
+    builder.set_entry_point(coordinator)
+    
+    # 添加基本边
+    builder.add_edge(coordinator, worker_a, condition="CONTINUE")  # 继续循环时发给 worker_a
+    builder.add_edge(coordinator, worker_b, condition="CONTINUE")  # 继续循环时发给 worker_b
+    builder.add_edge(worker_a, coordinator)  # worker_a 返回给 coordinator
+    builder.add_edge(worker_b, coordinator)  # worker_b 返回给 coordinator
+    
+    # 根据需要添加stop_agent节点和边
+    if need_stop_agent:
+        builder.add_node(stop_agent)
+        builder.add_edge(coordinator, stop_agent, condition="DONE")  # 结束时发给 stop_agent
+    
+    flow = GraphFlow(
+        participants=participants,
+        graph=builder.build()
+    )
+    
+    # 运行并收集消息
+    raw_events = []
+    task = TextMessage(content="执行3轮循环后结束", source="user")
+    async for event in flow.run_stream(task=task):
+        if isinstance(event, TextMessage):
+            raw_events.append(event)
+            print(f"\n--- Event --- Source: {event.source} ---")
+            print(f"Content:\n{event.content}")
+            print(f"--------------------------")
+    
+    # 解析和验证消息
+    agent_messages: List[TextMessage] = [event for event in raw_events if isinstance(event, TextMessage) and event.source != "user"]
+    
+    # 验证消息顺序
+    actual_sources = [msg.source for msg in agent_messages]
+    print(f"\n实际消息顺序: {actual_sources}")
+    
+    # 解析结构化消息
+    parsed_messages = []
+    for msg in agent_messages:
+        try:
+            content = parse_message(msg)
+            parsed_messages.append(content)
+        except ValueError as e:
+            assert False, f"解析来自 {msg.source} 的消息失败: {e}\n原始消息:\n{msg.content}"
+    
+    # 验证消息内容
+    # 1. coordinator 第一条消息来源应该是 user
+    assert parsed_messages[0]["名字"] == "coordinator" and parsed_messages[0]["来源"] == "user", \
+        "coordinator 第一条消息来源错误"
+        
+    # 2. worker_a/worker_b 的消息来源都应该是 coordinator
+    worker_messages = [msg for msg in parsed_messages if msg["名字"].startswith("worker")]
+    for msg in worker_messages:
+        assert msg["来源"] == "coordinator", \
+            f"worker 消息来源错误: {msg}"
+            
+    # 3. coordinator 后续消息来源都应该是 worker_a 或 worker_b
+    coordinator_messages = [msg for msg in parsed_messages if msg["名字"] == "coordinator"][1:]  # 跳过第一条
+    for msg in coordinator_messages:
+        assert msg["来源"].startswith("worker"), \
+            f"coordinator 消息来源错误: {msg}"
+            
+    # 4. 如果有stop_agent,其消息来源应该是 coordinator
+    if need_stop_agent:
+        stop_messages = [msg for msg in parsed_messages if msg["名字"] == "stop_agent"]
+        assert len(stop_messages) == 1, "应该只有一条 stop_agent 消息"
+        assert stop_messages[0]["来源"] == "coordinator", \
+            f"stop_agent 消息来源错误: {stop_messages[0]}"
+        
+    print("\n=== test_nexus_flow 验证通过 ===")
 
 def test_build_safe_graphflow_with_two_agents(model_client):
     """测试 build_safe_graphflow 对两个 agent 的构建"""
