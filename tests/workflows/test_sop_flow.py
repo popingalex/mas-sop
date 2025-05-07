@@ -13,7 +13,7 @@ from src.config.parser import AgentConfig # Assuming AgentConfig is importable
 from src.tools.plan.manager import PlanManager
 from src.tools.plan.types import Plan, Step
 from loguru import logger
-from src.workflows.loader import load_workflow_template # Import the loader
+from src.workflows.loader import load_workflow_template, extract_plan_from_workflow_template # Import the loader and extract_plan_from_workflow_template
 from src.workflows.models import WorkflowTemplate # Import the Pydantic model returned by loader
 import io # For StringIO
 from unittest.mock import patch # Import patch
@@ -184,3 +184,37 @@ async def test_sop_flow_execution_with_real_components(team_name_to_test: str, m
     # Further detailed assertions on the content of parsed_agent_messages can be added here if needed,
     # similar to the previous complex test, but for now, focus is on running and observing logs.
     logger.info(f"Test 'test_sop_flow_execution_with_real_components' for team '{team_name_to_test}' completed. Review printed messages for flow verification.")
+
+@pytest.mark.asyncio
+async def test_safe_sop_full_flow():
+    """完整SOP流程集成测试：加载配置，提取plan，构建GraphFlow并运行，断言每个agent都响应。"""
+    # 1. 加载配置
+    workflow_template = load_workflow_template("teams/safe-sop/config.yaml")
+    plan_obj = extract_plan_from_workflow_template(workflow_template)
+    plan = plan_obj.model_dump(exclude_none=True)  # 转为dict，兼容GraphFlow
+    agent_configs = [agent.model_dump(exclude_none=True) for agent in workflow_template.agents]
+    model_client = load_llm_config_from_toml()
+
+    # 2. 构建GraphFlow
+    flow = build_dynamic_coordinated_graphflow(
+        agent_configs=agent_configs,
+        initial_top_plan=plan,
+        model_client=model_client,
+        plan_manager_for_agents=None,
+        nexus_agent_name="Strategist"
+    )
+
+    # 3. 运行流程
+    initial_event = "重大火灾，城市中心多栋建筑受影响，请立即执行SOP。"
+    processed = []
+    # 直接await async for，避免asyncio.run
+    async for event in flow.run_stream(task=initial_event):
+        if hasattr(event, "source") and hasattr(event, "content"):
+            print(f"[{event.source}] {event.content}")
+            processed.append((event.source, event.content))
+
+    # 4. 断言
+    assert any("Strategist" in src for src, _ in processed), "Nexus未响应"
+    assert any("Awareness" in src for src, _ in processed), "Awareness未响应"
+    assert any("Executor" in src for src, _ in processed), "Executor未响应"
+    assert len(processed) > 3, "流程未完整走通"

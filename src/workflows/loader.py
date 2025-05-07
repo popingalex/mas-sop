@@ -3,6 +3,7 @@ from ruamel.yaml.error import YAMLError
 from pydantic import ValidationError
 from .models import WorkflowTemplate
 from loguru import logger
+from src.tools.plan.types import Plan, Step
 
 def load_workflow_template(filepath: str) -> WorkflowTemplate:
     """加载并解析 YAML 格式的工作流模板文件。
@@ -45,3 +46,30 @@ def load_workflow_template(filepath: str) -> WorkflowTemplate:
     except Exception as e:
          logger.error(f"加载工作流模板时发生未知错误: {e}")
          raise # Re-raise unexpected errors 
+
+def extract_plan_from_workflow_template(template: "WorkflowTemplate") -> Plan:
+    """
+    从WorkflowTemplate对象提取SOP计划（Plan类型），每个任务一次一个人执行。
+    Plan结构：
+        id: workflow.name
+        title: workflow.name
+        description: workflow.description
+        steps: List[Step]
+    Step结构：
+        index: int
+        description: task.description
+        status: "pending"
+    """
+    steps = []
+    idx = 1
+    for step in template.workflow.steps:
+        for task in step.tasks:
+            steps.append(Step(index=idx, description=task.description, status="pending"))
+            idx += 1
+    plan = Plan(
+        id=template.workflow.name,
+        title=template.workflow.name,
+        description=template.workflow.description or "",
+        steps=steps
+    )
+    return plan 

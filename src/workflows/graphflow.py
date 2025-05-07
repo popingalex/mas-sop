@@ -183,6 +183,7 @@ def build_dynamic_coordinated_graphflow(
         nexus_agent_name=nexus_agent_name,
         predefined_top_plan_json=initial_top_plan_json_str
     )
+    print('DEBUG: Nexus system prompt =', nexus_system_prompt)
     
     nexus_agent = _create_sop_agent_from_config_dict(
         nexus_config_dict, model_client, plan_manager_for_agents
