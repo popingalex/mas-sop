@@ -24,6 +24,7 @@ def load_workflow_template(filepath: str) -> WorkflowTemplate:
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             raw_data = yaml.load(f)
+        logger.debug(f"Raw data loaded from YAML. Top-level keys: {list(raw_data.keys()) if isinstance(raw_data, dict) else 'Not a dict'}")
     except FileNotFoundError:
         logger.error(f"工作流模板文件未找到: {filepath}")
         raise
@@ -36,7 +37,7 @@ def load_workflow_template(filepath: str) -> WorkflowTemplate:
 
     try:
         template = WorkflowTemplate.model_validate(raw_data)
-        logger.success(f"成功加载并验证工作流模板: {template.name} v{template.version}")
+        logger.success(f"成功加载并验证工作流模板: {template.workflow.name} (Team: {template.team_name}, Config Version: {template.version})")
         return template
     except ValidationError as ve:
         logger.error(f"工作流模板文件 '{filepath}' 内容验证失败: {ve}")
