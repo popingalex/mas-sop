@@ -40,6 +40,26 @@
             "justMyCode": false,
             "console": "integratedTerminal",
             "purpose": ["debug-test"]
+        },
+        {
+            "name": "Python: Debug Nexus Flow Test",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/workflows/test_graphflow.py",
+                "-k", "test_nexus_flow", 
+                "-svv"
+            ],
+            "python": "${workspaceFolder}/venv/bin/python",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "PYTEST_ADDOPTS": "--no-cov" 
+            },
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "purpose": ["debug-test"]
         }
     ]
 } 
