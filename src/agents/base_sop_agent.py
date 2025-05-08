@@ -1,7 +1,8 @@
-from typing import Optional, List, Dict, Any, AsyncGenerator, Union
+from typing import Optional, List, Dict, Any, AsyncGenerator, Union, Callable
 from pydantic import BaseModel
 from loguru import logger
 import hashlib
+import asyncio
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage, BaseChatMessage, ChatMessage
@@ -31,7 +32,49 @@ class BaseSOPAgent(AssistantAgent):
         self.plan_manager = plan_manager
         self.artifact_manager = artifact_manager
         self.model_client = model_client
+        self._tools: Dict[str, Callable] = {}
         
+    def register_tool(self, tool: Union[Callable, Any]) -> None:
+        """注册一个工具函数或工具对象。
+        
+        Args:
+            tool (Union[Callable, Any]): 要注册的工具函数或工具对象。
+                如果是函数，函数名将作为工具名。
+                如果是对象，尝试使用 name 属性作为工具名。
+        """
+        if hasattr(tool, 'name'):
+            tool_name = tool.name
+        elif hasattr(tool, '__name__'):
+            tool_name = tool.__name__
+        else:
+            tool_name = str(tool)
+            
+        self._tools[tool_name] = tool
+        logger.info(f"[{self.name}] Registered tool: {tool_name}")
+        
+    async def call_tool(self, tool_name: str, input: Any, **kwargs) -> Any:
+        """调用已注册的工具。
+        
+        Args:
+            tool_name: 工具名称
+            input: 工具输入参数
+            **kwargs: 其他参数，包括可能的 ctx
+            
+        Returns:
+            Any: 工具执行结果
+            
+        Raises:
+            ValueError: 如果工具未注册
+        """
+        if tool_name not in self._tools:
+            raise ValueError(f"Tool '{tool_name}' not found")
+        
+        tool = self._tools[tool_name]
+        if hasattr(tool, 'run'):
+            return await tool.run(input, **kwargs)
+        else:
+            return await tool(input, **kwargs)
+
     def _extract_task(self, messages: List[BaseChatMessage]) -> str:
         """从消息列表中提取最后一条用户消息作为任务。"""
         if not messages:

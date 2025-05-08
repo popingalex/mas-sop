@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent, MessageFilterAgent, MessageFilterConfig, PerSourceFilter
 from autogen_agentchat.teams import DiGraphBuilder, GraphFlow
 from autogen_core.models import ChatCompletionClient # 假设这是您的模型客户端基类型
@@ -7,11 +7,14 @@ from unittest.mock import MagicMock # 用于模拟PlanManager
 
 # 假设SOPAgent, AgentConfig, PlanManager可以从您的项目中正确导入
 # 您需要确保这些导入路径是正确的
-from src.agents.nexus_agent import NexusAgent # 新增
-from src.agents.leaf_agent import LeafAgent   # 新增
 from src.config.parser import AgentConfig, TeamConfig # Pydantic模型
 from src.tools.plan.manager import PlanManager # 您的PlanManager类
 from loguru import logger # 可选，用于日志记录
+
+# 使用延迟导入避免循环依赖
+if TYPE_CHECKING:
+    from src.agents.nexus_agent import NexusAgent
+    from src.agents.leaf_agent import LeafAgent
 
 # --- 系统提示词模板 ---
 
@@ -119,11 +122,15 @@ def _create_agent_from_config_dict(
     agent_config_data: Dict[str, Any],
     model_client: ChatCompletionClient,
     plan_manager_instance: Optional[PlanManager] = None,
-    artifact_manager_instance: Optional[Any] = None # 新增 artifact_manager
+    artifact_manager_instance: Optional[Any] = None
 ) -> AssistantAgent: # 返回更通用的 AssistantAgent，因为 StopAgent 可能是它
     """
     辅助函数：根据从配置文件加载的字典数据实例化正确的Agent类型。
     """
+    # 在函数内部导入，避免循环导入
+    from src.agents.nexus_agent import NexusAgent
+    from src.agents.leaf_agent import LeafAgent
+    
     if plan_manager_instance is None:
         logger.warning(f"PlanManager not provided for {agent_config_data.get('name', 'UnknownAgent')}. Using MagicMock.")
         plan_manager_instance = MagicMock(spec=PlanManager)
@@ -192,6 +199,9 @@ def build_dynamic_coordinated_graphflow(
     - LeafAgents从team_config.agents实例化。
     - StopAgent从team_config.agents或默认创建。
     """
+    # 在函数内部导入 NexusAgent 以避免循环导入
+    from src.agents.nexus_agent import NexusAgent
+    from src.agents.leaf_agent import LeafAgent
     
     nexus_agent_name = team_config.properties.get("nexus_agent_name", "NexusCoordinator") if team_config.properties else "NexusCoordinator"
     
@@ -299,25 +309,27 @@ def build_dynamic_coordinated_graphflow(
     builder = DiGraphBuilder()
     all_graph_participants: List[AssistantAgent] = [nexus_agent]
     
+    # 添加 NexusAgent 节点，设置其激活条件为 "any"，表示任何输出都可以
     builder.add_node(nexus_agent, activation="any")
 
     for leaf in leaf_agents:
         builder.add_node(leaf)
-        # 路由条件简化：NexusAgent的输出应该明确指示下一个Agent或任务
-        # 或者GraphFlow的路由逻辑能处理好顺序调用
-        # HANDOFF_TO_{leaf.name} 这种条件需要NexusAgent的输出配合
+        # 路由条件：当 NexusAgent 输出包含 "HANDOFF_TO_[leaf.name]" 时，转到对应的 LeafAgent
         builder.add_edge(nexus_agent, leaf, condition=f"HANDOFF_TO_{leaf.name}") 
-        builder.add_edge(leaf, nexus_agent) # LeafAgent完成后总是回到NexusAgent
+        # LeafAgent 完成后返回到 NexusAgent
+        builder.add_edge(leaf, nexus_agent, condition="TASK_COMPLETE") 
         all_graph_participants.append(leaf)
     
+    # 添加 StopAgent 节点和边
     builder.add_node(stop_agent_instance)
+    # 当 NexusAgent 输出 "ALL_TASKS_DONE" 时，转到 StopAgent
     builder.add_edge(nexus_agent, stop_agent_instance, condition="ALL_TASKS_DONE")
     all_graph_participants.append(stop_agent_instance)
 
+    # 设置入口点
     builder.set_entry_point(nexus_agent)
     graph = builder.build()
     logger.success(f"Dynamic coordinated graph built with Nexus '{nexus_agent.name}' and {len(leaf_agents)} leaf agents.")
     
     # 确保所有参与者都被加入到GraphFlow的participants列表中
-    # participants列表应该只包含实际的Agent对象，而不是字符串名字
     return GraphFlow(participants=all_graph_participants, graph=graph) 

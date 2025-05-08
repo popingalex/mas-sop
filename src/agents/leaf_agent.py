@@ -103,61 +103,88 @@ class LeafAgent(BaseSOPAgent):
         2. 执行SOP任务（可能涉及自我分解调用_process_plan，或直接调用llm_cached_aask）。
         3. 将执行结果作为消息产出。
         """
-        assigned_task_str = ""
-        nexus_assignment_prefix = "NEXUS_ASSIGNMENT:"
-        for msg in reversed(messages):
-            if msg.source == "NexusAgent" and msg.content and msg.content.startswith(nexus_assignment_prefix):
-                assigned_task_str = msg.content
-                break
+        # 1. 提取任务内容
+        task_content = None
+        task_id = None
+        task_name = None
         
-        if not assigned_task_str:
+        # 从最近的消息开始查找任务分配
+        for msg in reversed(messages):
+            if msg.source == self.nexus_agent_name and msg.content:
+                if msg.content.startswith("NEXUS_ASSIGNMENT:"):
+                    try:
+                        # 解析任务分配消息
+                        lines = msg.content.split('\n')
+                        details = {}
+                        for line in lines[1:]:  # 跳过第一行的 "NEXUS_ASSIGNMENT:"
+                            if line == "--- END OF ASSIGNMENT ---":
+                                break
+                            if ": " in line:
+                                key, value = line.split(": ", 1)
+                                details[key.strip()] = value.strip()
+                        
+                        task_content = details.get("DESCRIPTION")
+                        task_id = details.get("SOP_TASK_ID")
+                        task_name = details.get("SOP_TASK_NAME")
+                        break
+                    except Exception as e:
+                        logger.error(f"{self.name}: Error parsing Nexus assignment: {e}")
+                        continue
+
+        if not task_content:
+            # 如果没有找到正式的任务分配，尝试从最后一条消息提取内容
             task_content = self._extract_task(messages)
             if not task_content:
-                logger.warning(f"{self.name}: No user task found in incoming messages.")
-                # Yield a message indicating no task was found, using the agent's name
-                yield TextMessage(content=f"{self.name}: No task found in messages.", source=self.name)
-                # Optionally yield Response with empty content or specific error marker
-                yield Response(chat_message=TextMessage(content="[NO_TASK_FOUND]", source=self.name))
+                logger.warning(f"{self.name}: No task found in messages")
+                yield TextMessage(
+                    content=f"{self.name}: No task found in messages",
+                    source=self.name,
+                    role="assistant"
+                )
                 return
-            logger.warning(f"{self.name}: Could not find specific Nexus assignment. Falling back to last user message as task: {task_content[:100]}...")
 
-        parsed_task_description = task_content
-        sop_task_id = "N/A"
-        sop_task_name = "N/A"
-
-        if task_content.startswith(nexus_assignment_prefix):
-            try:
-                lines = task_content.split('\n')
-                details = {}
-                for line in lines[1:]:
-                    if line == "--- END OF ASSIGNMENT ---":
-                        break
-                    if ": " in line:
-                        key, value = line.split(": ", 1)
-                        details[key.strip()] = value.strip()
-                
-                parsed_task_description = details.get("DESCRIPTION", task_content)
-                sop_task_id = details.get("SOP_TASK_ID", "N/A")
-                sop_task_name = details.get("SOP_TASK_NAME", "N/A")
-                logger.info(f"{self.name}: Received SOP Task '{sop_task_name}' (ID: {sop_task_id}). Description: {parsed_task_description[:100]}...")
-            except Exception as e:
-                logger.error(f"{self.name}: Error parsing Nexus assignment: {e}. Raw content: {task_content[:200]}... Defaulting to full content as task.")
-
-        else:
-            logger.info(f"{self.name}: Processing task: {parsed_task_description[:100]}...")
-
+        # 2. 执行任务
         try:
-            execution_result = await self.llm_cached_aask(parsed_task_description)
+            # 记录任务开始
+            logger.info(f"{self.name}: Starting task '{task_name or 'Unnamed'}' (ID: {task_id or 'N/A'})")
             
-            logger.info(f"{self.name}: Task '{sop_task_name}' (ID: {sop_task_id}) execution result: {execution_result[:100]}...")
-            yield TextMessage(
-                content=f"LEAF_AGENT_RESULT:\nSOP_TASK_ID: {sop_task_id}\nSOP_TASK_NAME: {sop_task_name}\nRESULT: {execution_result}", 
-                source=self.name
+            # 调用 LLM 执行任务
+            response = await self.llm_cached_aask(
+                task_content,
+                cancellation_token=cancellation_token
             )
-                
-        except Exception as e:
-            logger.error(f"{self.name}: Error in on_messages_stream for task '{sop_task_name}': {e}", exc_info=True)
+            
+            # 构建任务完成消息
+            completion_message = f"""Task completed by {self.name}
+Task ID: {task_id or 'N/A'}
+Task Name: {task_name or 'Unnamed'}
+Result: {response}
+Status: TASK_COMPLETE"""
+
+            # 发送任务完成消息
             yield TextMessage(
-                content=f"name: {self.name}\nsource: LEAF_INTERNAL_ERROR\nSOP_TASK_ID: {sop_task_id}\nSOP_TASK_NAME: {sop_task_name}\nreason: Error: {str(e)}\noutput: TASK_FAILED_LEAF_PROCESSING",
-                source=self.name
+                content=completion_message,
+                source=self.name,
+                role="assistant"
+            )
+            
+            # 发送状态标记
+            yield TextMessage(
+                content="TASK_COMPLETE",
+                source=self.name,
+                role="assistant"
+            )
+
+        except Exception as e:
+            error_msg = f"{self.name}: Error executing task - {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            yield TextMessage(
+                content=error_msg,
+                source=self.name,
+                role="assistant"
+            )
+            yield TextMessage(
+                content="TASK_COMPLETE",  # 即使失败也标记为完成，让流程继续
+                source=self.name,
+                role="assistant"
             ) 

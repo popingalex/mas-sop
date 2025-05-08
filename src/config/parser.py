@@ -68,20 +68,26 @@ def load_team_config(filepath: str) -> TeamConfig:
     # 智能路径解析
     orig_filepath = filepath
     path_obj = Path(filepath)
-    if path_obj.is_absolute() or (path_obj.exists() and path_obj.is_file()):
-        config_path = path_obj
-    else:
-        # 不是绝对路径，尝试补全
-        if not filepath.endswith('.yaml'):
-            # safe-sop 或 safe-sop/ 这种
-            folder = filepath.rstrip('/')
-            config_path = Path('teams') / folder / 'config.yaml'
-        else:
-            # 形如 teams/safe-sop/config.yaml
-            config_path = Path(filepath)
-    if not config_path.exists():
-        logger.error(f"Configuration file not found: {config_path} (from input: {orig_filepath})")
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    
+    # 尝试不同的路径组合
+    possible_paths = [
+        path_obj,  # 原始路径
+        Path('teams') / path_obj,  # teams/原始路径
+        Path('teams') / path_obj / 'config.yaml',  # teams/原始路径/config.yaml
+        path_obj / 'config.yaml',  # 原始路径/config.yaml
+    ]
+    
+    # 找到第一个存在的路径
+    config_path = None
+    for p in possible_paths:
+        if p.exists() and p.is_file():
+            config_path = p
+            break
+    
+    if not config_path:
+        logger.error(f"Configuration file not found: tried paths: {[str(p) for p in possible_paths]} (from input: {orig_filepath})")
+        raise FileNotFoundError(f"Configuration file not found: tried multiple paths")
+        
     logger.info(f"Attempting to load team configuration from '{config_path}'...")
     try:
         with open(config_path, 'r', encoding='utf-8') as f:

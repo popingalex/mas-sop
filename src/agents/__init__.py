@@ -6,12 +6,12 @@ Agents package for MAS-SOP
 from .base_sop_agent import BaseSOPAgent # Added
 from .nexus_agent import NexusAgent       # Added
 from .leaf_agent import LeafAgent         # Added
-from .judge import JudgeAgent, JudgeDecision
+from .judge import JudgeDecision, judge_agent_tool
 
 __all__ = [
     "BaseSOPAgent", # Added
     "NexusAgent",   # Added
     "LeafAgent",    # Added
-    "JudgeAgent", 
+    "judge_agent_tool", 
     "JudgeDecision"
 ] 
