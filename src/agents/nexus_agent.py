@@ -200,9 +200,11 @@ DESCRIPTION: {next_step.description}
                         logger.info(f"[{self.name}]: Creating plan using available SOP templates.")
                         try:
                             # 创建新计划
+                            workflow = self.team_config.workflows[0]  # 使用第一个可用模板
                             plan = await self.plan_manager.create_plan(
-                                task_description=last_message_content,
-                                workflow_template=self.team_config.workflows[0]  # 使用第一个可用模板
+                                title=f"处理任务: {last_message_content[:50]}...",
+                                description=last_message_content,
+                                steps=workflow.steps if workflow else None
                             )
                             
                             if plan and plan.steps:

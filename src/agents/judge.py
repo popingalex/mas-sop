@@ -11,8 +11,8 @@ from autogen_agentchat.messages import TextMessage, ChatMessage
 
 class JudgeDecision(BaseModel):
     """任务判断结果模型"""
-    type: Literal["PLAN", "SIMPLE", "SEARCH", "UNCLEAR"] = Field(default="PLAN", description="任务类型")
-    reason: str = Field(..., description="判断原因")
+    type: str = "PLAN"  # 默认为 PLAN
+    reason: str
 
     class Config:
         use_enum_values = True
@@ -23,14 +23,12 @@ Your sole purpose is to analyze the given task description and classify its type
 The possible types are:
 - PLAN: Requires a multi-step plan or a structured approach due to its complexity.
 - SIMPLE: Can be handled directly in one or two steps without a formal plan.
-- SEARCH: Requires gathering more information or searching for details.
-- UNCLEAR: The task description is ambiguous or lacks critical details.
 
 If the task description implies multiple distinct steps, dependencies, or a need for coordination, lean towards 'PLAN'.
 
 Respond STRICTLY in JSON format with the following structure. Do NOT add any text before or after the JSON block:
 {
-    "type": "PLAN|SIMPLE|SEARCH|UNCLEAR",
+    "type": "PLAN|SIMPLE",
     "reason": "Brief explanation of your decision."
 }
 
@@ -96,7 +94,7 @@ class JudgeAgentTool:
                     raise ValueError("Response is not a JSON object")
                 if "type" not in json_obj or "reason" not in json_obj:
                     raise ValueError("Missing required fields 'type' or 'reason'")
-                if json_obj["type"] not in ["PLAN", "SIMPLE", "SEARCH", "UNCLEAR"]:
+                if json_obj["type"] not in ["PLAN", "SIMPLE"]:
                     raise ValueError(f"Invalid type value: {json_obj['type']}")
                 
                 # 创建并验证 JudgeDecision 对象
