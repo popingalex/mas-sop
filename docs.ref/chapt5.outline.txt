@@ -1,0 +1,45 @@
+5. SAFE框架实现、评估执行与结果分析 (SAFE Framework Implementation, Evaluation Execution, and Results Analysis)
+(本章旨在展示SAFE框架的具体技术实现方案，并依据第四章设计的评估体系，通过实验执行来验证框架的有效性，分析评估结果，并讨论其意义与局限性。)
+5.1 SAFE框架系统实现概述 (System Implementation Overview)
+5.1.1 技术选型与架构 (Technology Selection and Architecture)
+采用的多智能体系统（MAS）平台或库（例如：AgentVerse, MetaGPT, 或自研框架）。
+选用的底层大型语言模型（LLM）及其版本（例如：GPT-4-Turbo, Claude 3 Opus等）。
+系统整体架构图：展示各角色Agent、Asset Hub（信息资产库）、消息传递机制、与外部查询接口/模拟环境（EVE，如果实现）的交互关系。(对应原5.2.1)
+5.1.2 LLM在各角色中的应用方式 (LLM Application within Each Role)
+简述Strategist, Awareness, Field Expert（以水利为例）, Executor（若实现）如何利用LLM的核心能力（如理解、推理、生成、代码解释等）来执行其特定职责。(对应原5.1.1)
+5.1.3 核心机制实现 (Implementation of Core Mechanisms)
+SOP流程驱动引擎: 如何实现基于状态和规则的SOP步骤自动流转。
+Asset Hub实现: 信息资产的存储、检索、版本管理（简化说明）。
+角色间通信: 采用的消息格式和传递机制（例如：基于函数调用、消息队列）。
+信息查询接口模拟: 如何实现基于标签的单次查询响应机制。
+5.2 关键实现技术：提示词工程与Agent行为配置 (Key Implementation Techniques: Prompt Engineering and Agent Behavior Configuration)
+5.2.1 通用提示词设计原则 (General Prompt Design Principles)
+角色扮演指令、任务描述清晰化、输出格式约束、思维链引导、知识注入（若有）等通用策略。
+5.2.2 各角色核心提示词模板示例 (Core Prompt Template Examples for Each Role)
+展示Strategist进行目标设定、方案评估；Awareness进行信息整合、要素提取；Field Expert进行风险评估、方案生成的关键提示词片段或模板。(对应原5.1.2)
+强调如何通过提示词引导Agent遵循其角色职责和SOP要求。
+5.2.3 Agent行为逻辑配置 (Agent Behavior Logic Configuration)
+简述如何将第三章设计的行为树（或类似逻辑）转化为Agent可执行的代码或配置（例如：状态机、规则引擎）。
+5.3 评估实验执行过程 (Evaluation Experiment Execution Process)
+5.3.1 实验环境与配置 (Experimental Environment and Configuration)
+硬件环境、软件依赖、使用的LLM API密钥（若涉及）等。
+明确本次实验选用的具体评估场景（例如：“卫河堤坝决口”基准场景及其若干变体）。
+明确运行的系统配置：SAFE-Full, Baseline LLM, SAFE-SA, SAFE-SF。
+5.3.2 数据收集与记录 (Data Collection and Logging)
+说明实验过程中自动记录的数据类型（查询日志、资产文件、最终输出文本、内部状态日志等）。
+（若涉及）LLM Judge/专家评分的操作流程和记录方式。
+5.3.3 实验运行示例 (Example of Experiment Run)
+选取一个典型的场景运行（例如，SAFE-Full在基准堤坝场景下），简要展示其关键步骤的输入、输出片段和Agent交互过程（可配合截图或日志片段），让读者直观感受系统运作。(对应原5.2.2和5.3.2的部分内容)
+5.4 评估结果与分析 (Evaluation Results and Analysis)
+(本节是核心，将呈现依据第四章评估体系得到的数据和分析)
+5.4.1 核心规划能力对比分析 (SAFE vs. Baseline) (Comparative Analysis of Core Planning Capabilities)
+呈现SAFE-Full与Baseline LLM在维度1、2、3各项核心指标上的量化得分对比（可使用表格或柱状图）。
+结合具体案例，定性分析两者在任务分解、信息处理（特别是无效/干扰信息过滤）、产出物质量（逻辑性、专业性、规范性）等方面的显著差异及其原因。
+讨论在不同场景复杂度变体下，两者性能差异的变化趋势。
+5.4.2 SAFE内部结构有效性分析 (基于消融实验) (Analysis of SAFE's Internal Structure Effectiveness via Ablation)
+呈现SAFE-SA、SAFE-SF配置相对于SAFE-Full在核心指标上的性能指标变化量 (Δ%)。
+分析结果，量化评估Awareness和Field Expert角色对整体性能的具体贡献度。讨论角色专业化分工的必要性。(对应原5.4.2)
+5.4.3 综合讨论与发现 (Overall Discussion and Findings)
+总结SAFE框架在模拟应急规划任务中展现出的主要优势（例如：流程更规范、任务分解更清晰、专业性体现更强、输出更结构化）。
+分析评估过程中发现的SAFE框架（或当前实现）的局限性和不足之处。
+初步探讨评估体系自身的有效性和待改进之处。(对应原5.4.3)

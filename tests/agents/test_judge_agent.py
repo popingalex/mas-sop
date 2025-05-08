@@ -13,7 +13,7 @@ if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
 # Now import necessary components
-from src.agents.judge_agent import JudgeAgent, JudgeDecision
+from src.agents.judge import JudgeAgent, JudgeDecision
 from src.config.llm_config import create_completion_client # Assumes this function exists and works
 from src.config.parser import load_llm_config_from_toml # Assumes this function exists
 from src.types.task import TaskType # Import the Enum if you have one, or use strings

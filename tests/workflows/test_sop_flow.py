@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, AsyncMock # For mocking PlanManager
 from src.agents.sop_agent import SOPAgent # Assuming SOPAgent is importable
 from src.config.parser import AgentConfig # Assuming AgentConfig is importable
 from src.tools.plan.manager import PlanManager
-from src.tools.plan.types import Plan, Step
+from src.types.plan_types import Plan, Step # Updated path
 from loguru import logger
 from src.workflows.loader import load_workflow_template, extract_plan_from_workflow_template # Import the loader and extract_plan_from_workflow_template
 from src.workflows.models import WorkflowTemplate # Import the Pydantic model returned by loader

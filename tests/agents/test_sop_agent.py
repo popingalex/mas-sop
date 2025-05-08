@@ -19,7 +19,7 @@ from src.tools.plan.manager import PlanManager, Plan, Step
 from src.tools.artifact_manager import ArtifactManager
 from autogen_agentchat.messages import TextMessage
 from src.types.task import TaskType
-from src.agents.judge_agent import JudgeDecision
+from src.agents.judge import JudgeDecision
 
 # --- Test Data --- #
 

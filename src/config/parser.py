@@ -9,9 +9,11 @@ import toml # Add toml import
 from pathlib import Path
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from .llm_config import create_completion_client
+from src.types.plan import PlanTemplate
 
 # --- Pydantic 模型定义 ---
 
+# 先定义基础和嵌套类型
 class LLMConfig(BaseModel):
     model: Optional[str] = None
     temperature: Optional[float] = None
@@ -28,6 +30,7 @@ class HandoffTarget(BaseModel):
     target: str
     # description field removed as per user request
 
+# 再定义依赖它们的 AgentConfig 和 TeamConfig
 class AgentConfig(BaseModel):
     """Configuration for a single agent."""
     name: str
@@ -35,7 +38,7 @@ class AgentConfig(BaseModel):
     prompt: Optional[str] = None
     llm_config: Optional[LLMConfig] = None
     # --- New fields for SOPAgent internal tools --- 
-    sop_templates: Optional[Dict[str, Any]] = None # Pass SOP definitions here
+    sop_templates: Optional[Dict[str, Any]] = None # This seems to be for individual agent, perhaps should be at TeamConfig level?
     judge_agent_llm_config: Optional[LLMConfig] = None # Optional dedicated LLM config for JudgeAgent
     expertise_area: Optional[str] = None
     eve_interface_config: Optional[Dict[str, Any]] = None
@@ -46,36 +49,62 @@ class AgentConfig(BaseModel):
 class TeamConfig(BaseModel):
     """Overall team configuration model."""
     version: str
-    team_name: str
-    global_settings: Optional[GlobalSettings] = None
+    name: str
+    task: Optional[str] = None  # 支持YAML中的task字段
     agents: List[AgentConfig] # Now strictly list of AgentConfig
+    workflows: Optional[List[PlanTemplate]] = None # Changed to List[PlanTemplate]
+    properties: Optional[Dict[str, Any]] = None
+    nexus_settings: Optional[Dict[str, Any]] = None
+    global_settings: Optional[GlobalSettings] = None
 
 def load_team_config(filepath: str) -> TeamConfig:
-    """Loads and parses the team's YAML configuration file using Pydantic models."""
+    """Loads and parses the team's YAML configuration file using Pydantic models.
+    支持如下用法：
+    - 绝对路径或相对路径（如/xxx/yyy/config.yaml或teams/safe-sop/config.yaml）
+    - 仅传teams下的文件夹名（如safe-sop），自动拼接为teams/safe-sop/config.yaml
+    - 传文件夹名（如safe-sop/），自动补全config.yaml
+    """
     yaml = YAML(typ='safe')
-    logger.info(f"Attempting to load team configuration from '{filepath}'...")
+    # 智能路径解析
+    orig_filepath = filepath
+    path_obj = Path(filepath)
+    if path_obj.is_absolute() or (path_obj.exists() and path_obj.is_file()):
+        config_path = path_obj
+    else:
+        # 不是绝对路径，尝试补全
+        if not filepath.endswith('.yaml'):
+            # safe-sop 或 safe-sop/ 这种
+            folder = filepath.rstrip('/')
+            config_path = Path('teams') / folder / 'config.yaml'
+        else:
+            # 形如 teams/safe-sop/config.yaml
+            config_path = Path(filepath)
+    if not config_path.exists():
+        logger.error(f"Configuration file not found: {config_path} (from input: {orig_filepath})")
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    logger.info(f"Attempting to load team configuration from '{config_path}'...")
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             raw_config = yaml.load(f)
     except FileNotFoundError:
-        logger.error(f"Configuration file not found: {filepath}")
+        logger.error(f"Configuration file not found: {config_path}")
         raise
     except YAMLError as e:
         logger.error(f"Configuration file YAML parsing error: {e}")
         raise
 
     if not isinstance(raw_config, dict):
-        raise ValueError(f"The top level of the configuration file '{filepath}' must be a dictionary.")
+        raise ValueError(f"The top level of the configuration file '{config_path}' must be a dictionary.")
 
     try:
         # Use Pydantic model validation for the entire structure
         loaded_config = TeamConfig.model_validate(raw_config)
-        logger.success(f"Successfully loaded and validated configuration for team '{loaded_config.team_name}' v{loaded_config.version}")
+        logger.success(f"Successfully loaded and validated configuration for team '{loaded_config.name}' v{loaded_config.version}")
         return loaded_config
     except ValidationError as ve:
         logger.error(f"Configuration validation failed: {ve}")
         # Optionally re-raise or handle differently
-        raise ValueError(f"Invalid configuration in '{filepath}': {ve}")
+        raise ValueError(f"Invalid configuration in '{config_path}': {ve}")
     except Exception as e:
         logger.exception("An unexpected error occurred during configuration validation.")
         raise
@@ -130,59 +159,3 @@ def load_llm_config_from_toml(provider: str = "ds") -> Optional[OpenAIChatComple
     except Exception as e:
         logger.error(f"Failed to load LLM configuration: {e}")
         return None
-
-# --- 示例用法更新 --- #
-if __name__ == '__main__':
-    # --- Example for YAML Team Config --- 
-    try:
-        script_dir = os.path.dirname(__file__)
-        config_path = os.path.join(script_dir, '../../teams/safe-sop/config.yaml')
-        logger.info(f"Loading example team configuration file: {config_path}")
-        loaded_team_config: TeamConfig = load_team_config(config_path) # Type hint for clarity
-
-        print("\n--- Team Config Load Result (Partial) ---")
-        print(f"Team Name: {loaded_team_config.team_name}")
-        print(f"Config Version: {loaded_team_config.version}")
-
-        print("\nAgents Summary:")
-        if loaded_team_config.agents:
-            for agent_conf in loaded_team_config.agents:
-                print(f"  - Name: {agent_conf.name}")
-                print(f"    Agent Class: {agent_conf.agent}")
-                if agent_conf.prompt:
-                    print(f"    Prompt Snippet: {agent_conf.prompt[:50]}...")
-                if agent_conf.actions:
-                    print(f"    Actions ({len(agent_conf.actions)}): {agent_conf.actions[:2]}...") # Print first few actions
-                if agent_conf.handoffs:
-                    print(f"    Handoff Targets ({len(agent_conf.handoffs)}): {[h.target for h in agent_conf.handoffs]}")
-                if agent_conf.assigned_tools:
-                    print(f"    Assigned Tools: {agent_conf.assigned_tools}")
-        else:
-            print("  No agents defined.")
-
-        print("\nExample completed for YAML config.")
-
-    except (FileNotFoundError, YAMLError, ValueError, ValidationError) as e:
-        logger.exception("Error loading or parsing team configuration file")
-        print(f"\nError during team configuration loading: {e}")
-
-    print("\n" + "="*30 + "\n")
-
-    # --- Example for TOML LLM Config --- 
-    try:
-        toml_config_path = os.path.join(script_dir, '../../config.toml') # Adjust path if needed
-        logger.info(f"Loading example LLM configuration file: {toml_config_path}")
-        loaded_llm_configs = load_llm_config_from_toml(toml_config_path)
-
-        print("\n--- LLM Config Load Result (from TOML) ---")
-        if loaded_llm_configs:
-            for provider, config in loaded_llm_configs.items():
-                print(f"  Provider: {provider}")
-                print(f"    Config: {config}")
-        else:
-            print("  No LLM configurations loaded from TOML file.")
-        print("\nExample completed for TOML LLM config.")
-
-    except Exception as e:
-         logger.exception("Error loading or parsing LLM configuration file")
-         print(f"\nError during LLM configuration loading: {e}") 

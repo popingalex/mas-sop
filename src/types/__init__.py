@@ -1,6 +1,22 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TypedDict
 from pydantic import BaseModel
 
+# --- Standard Response Structure --- #
+class ResponseType(TypedDict):
+    """Standard response format for tool/manager operations."""
+    success: bool
+    message: str
+    data: Optional[Any]
+
+def success(message: str, data: Optional[Any] = None) -> ResponseType:
+    """Helper function to create a success response."""
+    return ResponseType(success=True, message=message, data=data)
+
+def error(message: str, data: Optional[Any] = None) -> ResponseType:
+    """Helper function to create an error response."""
+    return ResponseType(success=False, message=message, data=data)
+
+# --- Existing Definitions --- #
 class AgentConfig(BaseModel):
     """智能体配置"""
     name: str
