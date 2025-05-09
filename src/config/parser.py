@@ -149,7 +149,7 @@ def load_llm_config() -> Dict[str, Any]:
         "\n".join(f"- {path}" for path in search_paths)
     )
 
-def load_llm_config_from_toml(provider: str = "ds") -> Optional[OpenAIChatCompletionClient]:
+def load_llm_config_from_toml(provider: str = "ds", structured_output: bool = True) -> Optional[OpenAIChatCompletionClient]:
     try:
         config = load_llm_config()
         if "llm" not in config or provider not in config["llm"]:

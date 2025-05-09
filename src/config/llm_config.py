@@ -31,8 +31,9 @@ def get_model_info(provider: str) -> ModelInfo:
     
     return MODEL_CAPABILITIES[provider]
 
-def create_completion_client(provider: str, config: Dict[str, Any]) -> OpenAIChatCompletionClient:
+def create_completion_client(provider: str, config: Dict[str, Any], structured_output: bool = True) -> OpenAIChatCompletionClient:
     model_info = get_model_info(provider)
+    model_info["structured_output"] = structured_output
     logger.info(f"Creating completion client for provider '{provider}' with model_info: {model_info}")
     return OpenAIChatCompletionClient(**config, model_info=model_info)
 

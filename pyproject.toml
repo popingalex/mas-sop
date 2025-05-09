@@ -13,4 +13,3 @@ markers = [
     "integration: marks tests that require integration with external services",
 ]
 asyncio_mode = "strict"
-asyncio_fixture_loop_scope = "module" 

@@ -12,7 +12,7 @@
                 "-s",
                 "tests/agents/test_integration_judge.py"
             ],
-            "python": "${workspaceFolder}/venv/bin/python",
+            "python": "${command:python.interpreterPath}",
             "cwd": "${workspaceFolder}",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
@@ -31,7 +31,7 @@
                 "-s",
                 "tests/llm/test_judge.py"
             ],
-            "python": "${workspaceFolder}/venv/bin/python",
+            "python": "${command:python.interpreterPath}",
             "cwd": "${workspaceFolder}",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}",
@@ -51,7 +51,7 @@
                 "-k", "test_nexus_flow", 
                 "-svv"
             ],
-            "python": "${workspaceFolder}/venv/bin/python",
+            "python": "${command:python.interpreterPath}",
             "cwd": "${workspaceFolder}",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}",

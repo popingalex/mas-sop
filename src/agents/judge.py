@@ -11,9 +11,6 @@ from autogen_agentchat.base import Response
 JudgeType = Literal["SIMPLE", "PLAN"]
 
 class JudgeDecision(BaseModel):
-    """
-    Represents the decision made by the judge regarding the task type.
-    """
     type: JudgeType = Field(..., description="The classified type of the task, either PLAN or SIMPLE.")
     reason: str = Field(..., description="A brief explanation for the classification decision.")
 
@@ -84,7 +81,7 @@ class JudgeAgent(BaseChatAgent):
             content=JudgeDecision.model_validate_json(model_response.content),
             models_usage=model_response.usage
         )
-        yield Response(chat_message=structured_msg, inner_messages=[structured_msg])
+        yield Response(chat_message=structured_msg)
             
 
     async def on_messages(self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken) -> Response:
