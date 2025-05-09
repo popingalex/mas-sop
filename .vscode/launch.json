@@ -22,14 +22,14 @@
             "purpose": ["debug-test"]
         },
         {
-            "name": "Python: GraphFlow Message Flow Test",
+            "name": "Python: Judge Agent Test",
             "type": "debugpy",
             "request": "launch",
             "module": "pytest",
             "args": [
                 "-v",
                 "-s",
-                "tests/workflows/test_graphflow_core.py::test_message_flow"
+                "tests/llm/test_judge.py"
             ],
             "python": "${workspaceFolder}/venv/bin/python",
             "cwd": "${workspaceFolder}",

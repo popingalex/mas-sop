@@ -1,24 +1,23 @@
-from typing import Literal, Optional, Any, Union
+from typing import Literal, Sequence, AsyncGenerator
 from pydantic import BaseModel, Field
-import json
-from loguru import logger
 
-from autogen_agentchat.agents import AssistantAgent
-from autogen_core.models import ChatCompletionClient
-from autogen_agentchat.tools import AgentTool
+from autogen_core.models import ChatCompletionClient, SystemMessage, UserMessage, LLMMessage, CreateResult
 from autogen_core import CancellationToken
-from autogen_agentchat.messages import TextMessage, ChatMessage
+from autogen_agentchat.tools import AgentTool
+from autogen_agentchat.agents import BaseChatAgent
+from autogen_agentchat.messages import BaseChatMessage, StructuredMessage, BaseAgentEvent
+from autogen_agentchat.base import Response
+
+JudgeType = Literal["SIMPLE", "PLAN"]
 
 class JudgeDecision(BaseModel):
-    """任务判断结果模型"""
-    type: str = "PLAN"  # 默认为 PLAN
-    reason: str
+    """
+    Represents the decision made by the judge regarding the task type.
+    """
+    type: JudgeType = Field(..., description="The classified type of the task, either PLAN or SIMPLE.")
+    reason: str = Field(..., description="A brief explanation for the classification decision.")
 
-    class Config:
-        use_enum_values = True
-
-JUDGE_PROMPT = """\
-You are a highly efficient task analyzer.
+JUDGE_PROMPT = """You are a highly efficient task analyzer.
 Your sole purpose is to analyze the given task description and classify its type.
 The possible types are:
 - PLAN: Requires a multi-step plan or a structured approach due to its complexity.
@@ -46,88 +45,53 @@ Your JSON Response:
 {
     "type": "SIMPLE",
     "reason": "The task is a direct question requiring factual information retrieval, suitable for a simple, direct answer."
-}"""
+}
+"""
 
-def judge_agent(model_client: ChatCompletionClient) -> AssistantAgent: 
-    return AssistantAgent(name="Judger", 
-                          system_message=JUDGE_PROMPT, 
-                          model_client=model_client)
+JUDGE_DESCRIPTION = "Analyzes a task to determine if it's simple (SIMPLE) or complex (PLAN)."
 
-class JudgeAgentTool:
-    def __init__(self, agent: AssistantAgent):
-        self.agent = agent
-        self.name = "Judger"
-    
-    async def run(self, input: Any, **kwargs) -> Any:
-        """运行工具。
+class JudgeAgent(BaseChatAgent):
+    def __init__(self, model_client: ChatCompletionClient):
+        super().__init__(name="JudgeAgent", description=JUDGE_DESCRIPTION)
+        self._model_client = model_client
+        self._system_messages = [SystemMessage(content=JUDGE_PROMPT)]
+
+    @property
+    def produced_message_types(self) -> Sequence[type[BaseChatMessage]]:
+        return [StructuredMessage[JudgeDecision]]
+
+    async def on_reset(self, cancellation_token: CancellationToken) -> None:
+        pass
+
+    async def on_messages_stream(
+        self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        task_content = messages[-1].to_text()
+
+        llm_messages_to_send: list[LLMMessage] = [
+            self._system_messages[0],
+            UserMessage(content=task_content, source=self.name)
+        ]
         
-        Args:
-            input: 输入参数
-            **kwargs: 其他参数
-            
-        Returns:
-            Any: 工具执行结果
-        """
-        try:
-            # 创建消息列表
-            messages = [
-                ChatMessage(role="system", content=JUDGE_PROMPT),
-                ChatMessage(role="user", content=str(input))  # 确保输入是字符串
-            ]
-            
-            # 调用 model_client 的 create 方法
-            response = await self.agent.model_client.create(messages=messages)
-            
-            # 提取响应内容
-            if isinstance(response, str):
-                content = response
-            elif hasattr(response, 'choices') and response.choices and hasattr(response.choices[0], 'message'):
-                content = response.choices[0].message.content
-            else:
-                content = str(response)
-                
-            # 尝试解析 JSON
-            try:
-                json_obj = json.loads(content)
-                # 验证必要字段
-                if not isinstance(json_obj, dict):
-                    raise ValueError("Response is not a JSON object")
-                if "type" not in json_obj or "reason" not in json_obj:
-                    raise ValueError("Missing required fields 'type' or 'reason'")
-                if json_obj["type"] not in ["PLAN", "SIMPLE"]:
-                    raise ValueError(f"Invalid type value: {json_obj['type']}")
-                
-                # 创建并验证 JudgeDecision 对象
-                decision = JudgeDecision(**json_obj)
-                return TextMessage(content=json.dumps(decision.dict()), source=self.name, role="assistant")
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                default_response = JudgeDecision(type="PLAN", reason="Failed to parse LLM response JSON, defaulting to PLAN type.")
-                return TextMessage(content=json.dumps(default_response.dict()), source=self.name, role="assistant")
-                
-            except Exception as e:
-                logger.error(f"Error processing judge response: {e}")
-                default_response = JudgeDecision(type="PLAN", reason=f"Error processing response: {str(e)}. Defaulting to PLAN type.")
-                return TextMessage(content=json.dumps(default_response.dict()), source=self.name, role="assistant")
-                
-        except Exception as e:
-            logger.error(f"Error in JudgeAgentTool.run: {e}")
-            default_response = JudgeDecision(type="PLAN", reason=f"Tool execution error: {str(e)}. Defaulting to PLAN type.")
-            return TextMessage(content=json.dumps(default_response.dict()), source=self.name, role="assistant")
+        model_response: CreateResult = await self._model_client.create(
+            messages=llm_messages_to_send,
+            json_output=True,
+            cancellation_token=cancellation_token
+        )
 
-def judge_agent_tool(model_client: ChatCompletionClient) -> JudgeAgentTool:
-    """创建一个 JudgeAgentTool 实例。
-    
-    Args:
-        model_client: LLM 客户端
-        
-    Returns:
-        JudgeAgentTool: 工具实例
-    """
-    judge_agent = AssistantAgent(
-        name="JudgeAgent",
-        model_client=model_client,
-        system_message=JUDGE_PROMPT
-    )
-    return JudgeAgentTool(judge_agent)
+        structured_msg = StructuredMessage(
+            source=self.name,
+            content=JudgeDecision.model_validate_json(model_response.content),
+            models_usage=model_response.usage
+        )
+        yield Response(chat_message=structured_msg, inner_messages=[structured_msg])
+            
+
+    async def on_messages(self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken) -> Response:
+        async for message in self.on_messages_stream(messages, cancellation_token):
+            if isinstance(message, Response):
+                return message
+        raise AssertionError("The stream should have returned the final result.")
+
+def judge_agent_tool(model_client: ChatCompletionClient) -> AgentTool:
+    return AgentTool(agent=JudgeAgent(model_client=model_client))

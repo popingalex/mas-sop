@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Literal
+from typing import Dict, Any, Optional, List, Literal, Union
 from typing_extensions import TypedDict
 from loguru import logger
 from ruamel.yaml import YAML, YAMLError
@@ -38,36 +38,40 @@ class ArtifactManager:
 
     def __init__(
         self,
-        base_dir: str | Path = ".",
+        base_dir: Optional[Union[str, Path]] = None,
         storage_mode: Literal["single", "multi"] = "single",
         storage_format: Literal["yaml", "json"] = "yaml"
     ):
         """初始化制品管理器。
 
         Args:
-            base_dir: 制品存储目录，如果不指定则使用当前目录下的 'artifacts' 子目录
+            base_dir: 制品存储目录。如果为 None，则不进行文件存储/加载。
             storage_mode: 存储模式，"single" 表示单文件模式，"multi" 表示多文件模式
             storage_format: 存储格式，"yaml" 表示 YAML 格式，"json" 表示 JSON 格式
         """
-        self.base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir) if base_dir else None
         self.storage_mode = storage_mode
         self.storage_format = storage_format
         self.yaml = YAML(typ='safe')
         self.yaml.indent(mapping=2, sequence=4, offset=2)
         self.yaml.preserve_quotes = True
 
-        if self.storage_mode == "single":
-            self.artifact_file = self.base_dir / f"artifact.{self.storage_format}"
-            self.base_dir.mkdir(parents=True, exist_ok=True)
-            if not self.artifact_file.exists():
-                self._save_all([])
+        if self.base_dir:
+            if self.storage_mode == "single":
+                self.artifact_file = self.base_dir / f"artifact.{self.storage_format}"
+                self.base_dir.mkdir(parents=True, exist_ok=True)
+                if not self.artifact_file.exists():
+                    self._save_all([])
+            else:
+                self.artifact_dir = self.base_dir / "artifact"
+                self.artifact_dir.mkdir(parents=True, exist_ok=True)
         else:
-            self.artifact_dir = self.base_dir / "artifact"
-            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            self.artifact_file = None
+            self.artifact_dir = None
 
     # --- 单文件模式下的全部读写 ---
     def _load_all(self) -> List[Artifact]:
-        if not self.artifact_file.exists():
+        if not self.base_dir or not self.artifact_file or not self.artifact_file.exists():
             return []
         try:
             if self.storage_format == "yaml":
@@ -82,6 +86,8 @@ class ArtifactManager:
             return []
 
     def _save_all(self, artifacts: List[Artifact]):
+        if not self.base_dir or not self.artifact_file:
+            return
         data = [a.model_dump(mode='json') for a in artifacts]
         try:
             if self.storage_format == "yaml":
@@ -94,13 +100,15 @@ class ArtifactManager:
             logger.error(f"保存artifact文件失败: {e}")
 
     # --- 多文件模式下的单个读写 ---
-    def _get_artifact_path(self, artifact_id: UUID) -> Path:
+    def _get_artifact_path(self, artifact_id: UUID) -> Optional[Path]:
+        if not self.base_dir or not self.artifact_dir:
+            return None
         ext = 'yaml' if self.storage_format == 'yaml' else 'json'
         return self.artifact_dir / f"{artifact_id}.{ext}"
 
     def _load_one(self, artifact_id: UUID) -> Optional[Artifact]:
         file_path = self._get_artifact_path(artifact_id)
-        if not file_path.exists():
+        if not file_path or not file_path.exists():
             return None
         try:
             if self.storage_format == "yaml":
@@ -116,6 +124,8 @@ class ArtifactManager:
 
     def _save_one(self, artifact: Artifact):
         file_path = self._get_artifact_path(artifact.id)
+        if not file_path:
+            return
         data = artifact.model_dump(mode='json')
         try:
             if self.storage_format == "yaml":
@@ -131,12 +141,13 @@ class ArtifactManager:
     def create_artifact(self, title: str, content: Any, author: str, tags: Optional[List[str]] = None, description: Optional[str] = None) -> Dict[str, Any]:
         try:
             artifact = Artifact(title=title, content=content, author=author, tags=tags or [], description=description)
-            if self.storage_mode == "single":
-                artifacts = self._load_all()
-                artifacts.append(artifact)
-                self._save_all(artifacts)
-            else:
-                self._save_one(artifact)
+            if self.base_dir:
+                if self.storage_mode == "single":
+                    artifacts = self._load_all()
+                    artifacts.append(artifact)
+                    self._save_all(artifacts)
+                else:
+                    self._save_one(artifact)
             return {"success": True, "data": artifact.model_dump(mode='json')}
         except (ValidationError, ValueError) as ve:
             return {"success": False, "error": str(ve)}
@@ -144,6 +155,8 @@ class ArtifactManager:
             return {"success": False, "error": str(e)}
 
     def get_artifact(self, artifact_id: str) -> Dict[str, Any]:
+        if not self.base_dir:
+            return {"success": False, "error": "Artifact storage is not configured (base_dir is None)."}
         try:
             uuid_obj = UUID(artifact_id)
             if self.storage_mode == "single":
@@ -161,6 +174,8 @@ class ArtifactManager:
             return {"success": False, "error": str(e)}
 
     def list_artifacts(self, tags: Optional[List[str]] = None, keywords: Optional[str] = None) -> Dict[str, Any]:
+        if not self.base_dir:
+            return {"success": True, "data": []}
         try:
             if self.storage_mode == "single":
                 artifacts = self._load_all()
@@ -182,6 +197,8 @@ class ArtifactManager:
             return {"success": False, "error": str(e)}
 
     def update_artifact(self, artifact_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.base_dir:
+            return {"success": False, "error": "Artifact storage is not configured (base_dir is None)."}
         try:
             uuid_obj = UUID(artifact_id)
             if self.storage_mode == "single":
@@ -206,6 +223,8 @@ class ArtifactManager:
             return {"success": False, "error": str(e)}
 
     def delete_artifact(self, artifact_id: str) -> Dict[str, Any]:
+        if not self.base_dir:
+            return {"success": False, "error": "Artifact storage is not configured (base_dir is None)."}
         try:
             uuid_obj = UUID(artifact_id)
             if self.storage_mode == "single":
@@ -226,6 +245,8 @@ class ArtifactManager:
 
     # --- 导入导出功能 ---
     def import_artifact_from_file(self, file_path: str) -> Dict[str, Any]:
+        if not self.base_dir:
+            return {"success": False, "error": "Artifact storage is not configured (base_dir is None)."}
         try:
             path = Path(file_path)
             if path.suffix == ".yaml":
@@ -248,6 +269,8 @@ class ArtifactManager:
             return {"success": False, "error": str(e)}
 
     def export_artifact_to_file(self, artifact_id: str, file_path: str) -> Dict[str, Any]:
+        if not self.base_dir:
+            return {"success": False, "error": "Artifact storage is not configured (base_dir is None)."}
         try:
             uuid_obj = UUID(artifact_id)
             if self.storage_mode == "single":
