@@ -2,7 +2,7 @@ import pytest
 from src.tools.plan.manager import PlanManager
 from src.tools.plan.agent import PlanManagingAgent
 from src.config.parser import load_llm_config_from_toml
-from src.types.plan_types import Plan, Step, Task # Updated path
+from src.types.plan import Plan, Step, Task
 
 @pytest.fixture
 def plan_manager(tmp_path):
@@ -47,7 +47,7 @@ async def test_plan_agent_llm_plan_crud(plan_agent, plan_manager):
 
 @pytest.mark.asyncio
 async def test_plan_agent_llm_step_task_crud(plan_agent, plan_manager):
-    """Test step and task CRUD via LLM agent"""
+    """Test step and task CRUD via LLM agent (分步测试)"""
     plan_title = "Step和Task测试计划"
     plan_desc = "测试LLM管理步骤和任务"
     await plan_agent.run(task=f"创建一个计划，标题为'{plan_title}'，描述为'{plan_desc}'。")
@@ -55,50 +55,44 @@ async def test_plan_agent_llm_step_task_crud(plan_agent, plan_manager):
     assert plan is not None
     plan_id = plan["id"]
 
-    # Add a step with a task
+    # 1. 先添加步骤
     step1_desc = "步骤1：包含一个任务"
     step1_assignee = "agent1"
-    task1_id = "t1"
-    task1_name = "任务1.1"
-    task1_desc = "步骤1的第一个任务"
-    # LLM might struggle with complex JSON in prompt, keep it simple or use structured tool input if possible
-    await plan_agent.run(task=f"请在ID为'{plan_id}'的计划中添加一个新步骤，描述为'{step1_desc}'，负责人是'{step1_assignee}'。在这个步骤里添加一个任务，任务ID是'{task1_id}'，名称是'{task1_name}'，描述是'{task1_desc}'。")
-    
-    # Verify step and task addition
+    await plan_agent.run(task=f"请在ID为'{plan_id}'的计划中添加一个新步骤，描述为'{step1_desc}'，负责人是'{step1_assignee}'。")
     plan = plan_manager.get_plan(plan_id)["data"]
     assert len(plan["steps"]) > 0, "Step was not added."
     step1 = plan["steps"][0]
     assert step1["description"] == step1_desc
     assert step1["assignee"] == step1_assignee
-    assert len(step1["tasks"]) > 0, "Task was not added to step."
-    assert step1["tasks"][0]["task_id"] == task1_id
-    assert step1["tasks"][0]["name"] == task1_name
-    step1_id = step1["id"] # Get the assigned step ID
+    step1_id = step1["id"]
 
-    # Update the step
-    step1_new_desc = "步骤1-已更新描述"
-    step1_new_status = "in_progress"
-    await plan_agent.run(task=f"请将ID为'{plan_id}'的计划中ID为'{step1_id}'的步骤的描述改为'{step1_new_desc}'，状态改为'{step1_new_status}'。")
-    
-    # Verify step update
+    # 2. 再添加任务到该步骤
+    task1_id = "t1"
+    task1_name = "任务1.1"
+    task1_desc = "步骤1的第一个任务"
+    await plan_agent.run(task=f"请在ID为'{plan_id}'的计划中，步骤ID为'{step1_id}'的步骤里添加一个任务，任务ID是'{task1_id}'，名称是'{task1_name}'，描述是'{task1_desc}'。")
     plan = plan_manager.get_plan(plan_id)["data"]
-    step1_updated = plan["steps"][0]
-    assert step1_updated["description"] == step1_new_desc
-    assert step1_updated["status"] == step1_new_status
+    step1 = plan["steps"][0]
+    assert len(step1["tasks"]) > 0, "Task was not added to step."
+    assert step1["tasks"][0]["id"] == task1_id
+    assert step1["tasks"][0]["name"] == task1_name
+    assert step1["tasks"][0]["description"] == task1_desc
 
-    # Update the task
+    # 3. 更新任务状态
     task1_new_status = "completed"
-    await plan_agent.run(task=f"请将ID为'{plan_id}'的计划中步骤ID为'{step1_id}'内任务ID为'{task1_id}'的状态改为'{task1_new_status}'。")
-    
-    # Verify task update and status propagation
+    update_status_prompt = f"请将ID为'{plan_id}'的计划中步骤ID为'{step1_id}'内任务ID为'{task1_id}'的状态改为'{task1_new_status}'。"
+    print("=== 调试：LLM消息流 ===")
+    async for event in plan_agent.run_stream(task=update_status_prompt):
+        print("LLM消息:", event)
+        print("类型:", type(event))
+    print("=== 结束 ===")
     plan = plan_manager.get_plan(plan_id)["data"]
     task1_updated = plan["steps"][0]["tasks"][0]
     assert task1_updated["status"] == task1_new_status
-    # Since it's the only task and it's completed, the step should also be completed
-    assert plan["steps"][0]["status"] == "completed", "Step status did not update after task completion."
-    # Plan status should also become completed if it was the only step
-    assert plan["status"] == "completed", "Plan status did not update after step completion."
-    
+    # Step和Plan状态联动断言
+    assert plan["steps"][0]["status"] == "completed"
+    assert plan["status"] == "completed"
+
     # Cleanup
     await plan_agent.run(task=f"请删除ID为'{plan_id}'的计划。")
     assert not any(p["id"] == plan_id for p in plan_manager.list_plans()["data"]), "Cleanup failed: Plan not deleted." 

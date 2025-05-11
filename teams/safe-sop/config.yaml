@@ -11,7 +11,7 @@ workflows:
     description: "Standard Operating Procedure for SAFE Emergency Response, focusing on declarative task objectives."
     steps:
     - id: "sop_01_init_plan_prep"
-      title: "SOP-01: 事件启动与规划准备"
+      name: "SOP-01: 事件启动与规划准备"
       assignee: "Strategist" # Renamed from assignee_role
       description: | # Overall goal for this phase
         Establish the foundation for the response: log the event, ensure key information elements are complete, and set up the team configuration and overall plan structure.
@@ -30,7 +30,7 @@ workflows:
           description: "Determine required expert roles, configure the response team, and instantiate the overall Standard Operating Procedure (SOP) plan for this event."
 
     - id: "sop_02_sit_aware_risk_assess"
-      title: "SOP-02: 态势理解与风险评估"
+      name: "SOP-02: 态势理解与风险评估"
       assignee: "Awareness" # Renamed from assignee_role
       description: | # Overall goal for this phase
         Develop comprehensive situational awareness and perform risk assessment based on available information. This provides the intelligence foundation for subsequent planning.
@@ -49,7 +49,7 @@ workflows:
           description: "Perform a comprehensive risk assessment. This involves an initial broad assessment, a potential decision point for specialized deep assessment by relevant experts, and integration of all findings into a final risk report."
 
     - id: "sop_03_objectives_coa_dev"
-      title: "SOP-03: 目标确定与方案制定"
+      name: "SOP-03: 目标确定与方案制定"
       assignee: "Strategist" # Renamed from assignee_role
       description: | # Overall goal for this phase
         Transition from analysis to action planning: define clear response objectives and develop the optimal Course of Action (CoA) to achieve them based on the assessed situation and risks.
@@ -64,7 +64,7 @@ workflows:
           description: "Develop a recommended Course of Action (CoA). This involves relevant experts generating potential CoA options based on objectives, followed by evaluation and selection of the most suitable CoA framework."
 
     - id: "sop_04_resource_plan_final"
-      title: "SOP-04: 资源确认与计划定稿"
+      name: "SOP-04: 资源确认与计划定稿"
       assignee: "Strategist" # Renamed from assignee_role
       description: | # Overall goal for this phase
         Confirm the resource feasibility of the selected CoA and finalize the complete Emergency Response Plan, ready for execution or simulation.
@@ -79,7 +79,7 @@ workflows:
           description: "Consolidate the selected Course of Action and resource confirmation status into the final, actionable Emergency Response Plan."
 
     - id: "sop_05_ext_sim_exec"
-      title: "SOP-05: (扩展) 行动方案模拟执行"
+      name: "SOP-05: (扩展) 行动方案模拟执行"
       assignee: "Executor" # Renamed from assignee_role
       description: | # Overall goal for this phase
         (Optional) Execute the finalized Emergency Response Plan within a simulated environment to validate its potential effectiveness and identify issues.
@@ -90,7 +90,7 @@ workflows:
           description: "Translate the finalized plan into simulation commands, configure and run the simulation in the Execution Validation Environment (EVE), and log the results."
 
     - id: "sop_06_ext_result_review"
-      title: "SOP-06: (扩展) 结果检查与复盘"
+      name: "SOP-06: (扩展) 结果检查与复盘"
       assignee: "Strategist" # Renamed from assignee_role
       description: | # Overall goal for this phase
         (Optional) Evaluate the results of the simulation execution and conduct a process review to capture lessons learned for future improvement.

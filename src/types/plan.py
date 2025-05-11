@@ -18,6 +18,7 @@ class Task(BaseModel):
 class Step(BaseModel):
     """步骤数据结构"""
     id: Optional[str] = None
+    name: Optional[str] = None
     index: Optional[int] = None
     description: str # 步骤的总体描述
     assignee: Optional[str] = None # 步骤的总体指派人，如果任务没有单独指派人则使用此指派人

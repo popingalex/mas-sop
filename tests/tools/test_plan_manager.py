@@ -59,7 +59,7 @@ def test_plan_steps_and_tasks_management(plan_manager):
     """测试步骤和任务的管理：创建带步骤和任务的计划、添加步骤、更新步骤、添加任务、更新任务"""
     # 1. 创建带步骤和任务的计划
     initial_task = Task(id="t1.1", name="Initial Task", description="First task of first step")
-    initial_step = Step(index=0, id="step_0", description="First Step", assignee="agent1", tasks=[initial_task])
+    initial_step = Step(index=0, id="step_0", name="First Step", description="First Step", assignee="agent1", tasks=[initial_task])
     
     create_result = plan_manager.create_plan(
         title="Test Plan with Steps and Tasks",
@@ -78,7 +78,7 @@ def test_plan_steps_and_tasks_management(plan_manager):
     assert plan_data["steps"][0]["tasks"][0]["task_id"] == "t1.1"
     
     # 2. 添加新步骤
-    step_to_add = Step(index=99, description="Second Step", assignee="agent2")
+    step_to_add = Step(index=99, id=None, name="Second Step", description="Second Step", assignee="agent2")
     add_step_result = plan_manager.add_step(
         plan_id_str=plan_id,
         step_data=step_to_add

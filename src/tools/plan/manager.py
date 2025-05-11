@@ -9,7 +9,7 @@ import json
 # Assuming types.py is in the parent directory or PYTHONPATH is configured
 from ..types import ResponseType, success, error
 from ..errors import ErrorMessages
-from src.types.plan import Plan, Step, Task, PlanStatus, StepStatus # Import Pydantic models and new Status types if defined there
+from src.types.plan import Plan, Step, Task, PlanStatus, StepStatus, TaskStatus # Import Pydantic models and new Status types if defined there
 
 # --- Type Definitions --- #
 
@@ -115,13 +115,28 @@ class PlanManager:
         steps: Annotated[Optional[List[Step]], "步骤列表 (Pydantic Step models)"] = None,
         plan_id_str: Annotated[Optional[str], "指定计划ID (string for UUID)"] = None
     ) -> ResponseType:
-        """创建新计划，使用Pydantic模型。
-        
+        """
+        创建新计划，使用Pydantic模型。
+
         Args:
-            title: 计划标题
-            description: 计划描述
-            steps: 步骤列表 (Pydantic Step models), 每个步骤可以包含tasks.
-            plan_id_str: 指定计划ID (字符串形式的UUID)，如果不指定则自动生成.
+            title: 计划标题。
+            description: 计划描述。
+            steps: 步骤列表（List[Step]，可选），每个步骤支持以下字段：
+                - id: 步骤唯一标识（可选）
+                - name: 步骤名称（可选）
+                - description: 步骤描述（必填）
+                - assignee: 步骤指派人（可选）
+                - status: 步骤状态（not_started, in_progress, completed, error，可选，默认not_started）
+                - tasks: 任务列表（List[Task]，可选），每个任务支持：
+                    - id: 任务唯一标识
+                    - name: 任务名称
+                    - description: 任务描述
+                    - assignee: 任务指派人（可选）
+                    - status: 任务状态（not_started, in_progress, completed, error，可选，默认not_started）
+            plan_id_str: 指定计划ID（字符串形式的UUID，可选）。
+
+        Returns:
+            ResponseType: 包含新建计划的详细信息（data字段为Plan的dict结构）。
         """
         try:
             plan_id: UUID
@@ -160,7 +175,14 @@ class PlanManager:
             return error(str(e))
 
     def get_plan(self, plan_id_str: Annotated[str, "要获取的计划的 UUID 字符串"]) -> ResponseType:
-        """获取指定 ID 的计划详情。"""
+        """
+        获取指定ID的计划详情。
+
+        Args:
+            plan_id_str: 计划ID（UUID字符串）。
+        Returns:
+            ResponseType: 包含计划的详细信息（data字段为Plan的dict结构，字段同Plan/Step/Task定义）。
+        """
         try:
             plan_id = UUID(plan_id_str)
         except ValueError:
@@ -172,14 +194,26 @@ class PlanManager:
         return success("获取计划成功", data=plan.model_dump(mode='json')) # Return dict representation
 
     def list_plans(self) -> ResponseType:
-        """列出所有计划。"""
+        """
+        列出所有计划。
+
+        Returns:
+            ResponseType: 包含所有计划的列表（data字段为List[Plan]的dict结构，字段同Plan/Step/Task定义）。
+        """
         # Return list of dict representations of plans
         plan_list = [p.model_dump(mode='json') for p in self._plans.values()]
         logger.info(f"列出 {len(plan_list)} 个计划")
         return success("获取计划列表成功", data=plan_list)
 
     def delete_plan(self, plan_id_str: Annotated[str, "要删除的计划的 UUID 字符串"]) -> ResponseType:
-        """删除指定 ID 的计划。"""
+        """
+        删除指定ID的计划。
+
+        Args:
+            plan_id_str: 计划ID（UUID字符串）。
+        Returns:
+            ResponseType: 删除结果。
+        """
         try:
             plan_id = UUID(plan_id_str)
         except ValueError:
@@ -200,7 +234,15 @@ class PlanManager:
         self, plan_id_str: Annotated[str, "要更新状态的计划的 UUID 字符串"],
         status: Annotated[PlanStatus, "新的计划状态"]
     ) -> ResponseType:
-        """更新指定计划的状态。通常计划状态由步骤状态派生，但此方法允许直接设置。"""
+        """
+        更新指定计划的状态。
+
+        Args:
+            plan_id_str: 计划ID（UUID字符串）。
+            status: 新的计划状态（not_started, in_progress, completed, error）。
+        Returns:
+            ResponseType: 包含更新后计划的详细信息（data字段为Plan的dict结构）。
+        """
         try:
             plan_id = UUID(plan_id_str)
         except ValueError:
@@ -233,7 +275,23 @@ class PlanManager:
         step_data: Annotated[Step, "要添加的步骤对象 (Pydantic Step model, index will be ignored and recalculated)"],
         insert_after_index: Annotated[Optional[int], "可选：将步骤插入到指定索引之后 (从 0 开始)，默认为追加到末尾"] = None
     ) -> ResponseType:
-        """添加新步骤到指定计划。步骤的 index 会被重新计算。"""
+        """
+        添加新步骤到指定计划。
+
+        Args:
+            plan_id_str: 步骤所属计划的UUID字符串。
+            step_data: 要添加的步骤对象（Step），支持字段：
+                - id: 步骤唯一标识（可选）
+                - name: 步骤名称（可选）
+                - description: 步骤描述（必填）
+                - assignee: 步骤指派人（可选）
+                - status: 步骤状态（可选）
+                - tasks: 任务列表（List[Task]，可选）
+            insert_after_index: 可选，插入到指定索引后。
+
+        Returns:
+            ResponseType: 包含更新后计划的详细信息（data字段为Plan的dict结构）。
+        """
         try:
             plan_id = UUID(plan_id_str)
         except ValueError:
@@ -277,7 +335,21 @@ class PlanManager:
         step_id_or_index: Annotated[Union[str, int], "步骤的ID或索引"],
         update_data: Annotated[Dict[str, Any], "要更新的字段字典 (部分更新)"]
     ) -> ResponseType:
-        """更新指定计划中特定步骤的信息。可以更新 description, assignee, status, tasks。"""
+        """
+        更新指定计划中特定步骤的信息。
+
+        Args:
+            plan_id_str: 计划ID。
+            step_id_or_index: 步骤的ID或索引。
+            update_data: 要更新的字段字典，支持更新：
+                - name: 步骤名称
+                - description: 步骤描述
+                - assignee: 步骤指派人
+                - status: 步骤状态
+                - tasks: 任务列表（List[Task]）
+        Returns:
+            ResponseType: 包含更新后计划的详细信息（data字段为Plan的dict结构）。
+        """
         try:
             plan_id = UUID(plan_id_str)
         except ValueError:
@@ -379,7 +451,21 @@ class PlanManager:
         step_id_or_index: Annotated[Union[str, int], "步骤的ID或索引"],
         task_data: Annotated[Task, "要添加的任务对象 (Pydantic Task model)"]
     ) -> ResponseType:
-        """向指定计划的特定步骤添加新任务。"""
+        """
+        向指定计划的指定步骤添加任务。
+
+        Args:
+            plan_id_str: 计划ID。
+            step_id_or_index: 步骤的ID或索引。
+            task_data: 要添加的任务对象（Task），支持字段：
+                - id: 任务唯一标识
+                - name: 任务名称
+                - description: 任务描述
+                - assignee: 任务指派人（可选）
+                - status: 任务状态（可选）
+        Returns:
+            ResponseType: 包含更新后计划的详细信息（data字段为Plan的dict结构）。
+        """
         try:
             plan_id = UUID(plan_id_str)
         except ValueError:
@@ -435,7 +521,21 @@ class PlanManager:
         task_id: Annotated[str, "要更新的任务的task_id"],
         update_data: Annotated[Dict[str, Any], "要更新的字段字典 (部分更新)"]
     ) -> ResponseType:
-        """更新指定计划特定步骤中某个任务的信息。可以更新 name, assignee, description, status。"""
+        """
+        更新指定计划的指定步骤中的任务。
+
+        Args:
+            plan_id_str: 计划ID。
+            step_id_or_index: 步骤的ID或索引。
+            task_id: 要更新的任务ID。
+            update_data: 要更新的字段字典，支持更新：
+                - name: 任务名称
+                - description: 任务描述
+                - assignee: 任务指派人
+                - status: 任务状态
+        Returns:
+            ResponseType: 包含更新后计划的详细信息（data字段为Plan的dict结构）。
+        """
         try:
             plan_id = UUID(plan_id_str)
         except ValueError:
@@ -529,7 +629,14 @@ class PlanManager:
 
     # --- Helper & Utility Methods (continued) --- #
     def get_next_pending_step(self, plan_id_str: Annotated[str, "计划ID"]) -> ResponseType:
-        """获取指定计划中第一个状态为 'not_started' 的步骤。"""
+        """
+        获取指定计划的下一个待处理步骤。
+
+        Args:
+            plan_id_str: 计划ID（UUID字符串）。
+        Returns:
+            ResponseType: 包含下一个待处理步骤的详细信息（data字段为Step的dict结构，字段同Step/Task定义）。
+        """
         try:
             plan_id = UUID(plan_id_str)
         except ValueError:

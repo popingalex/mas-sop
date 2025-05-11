@@ -3,7 +3,7 @@ from autogen_agentchat.agents import AssistantAgent # MessageFilterAgent (add if
 from autogen_agentchat.teams import DiGraphBuilder, GraphFlow
 from autogen_agentchat.messages import TextMessage
 from src.config.parser import load_llm_config_from_toml, AgentConfig # Ensure AgentConfig is imported
-from src.workflows.graphflow import build_safe_graphflow, build_dynamic_coordinated_graphflow # Import the new function
+from src.workflows.graphflow import build_sop_graphflow # Import the new function
 from typing import Dict, Any, List, TypedDict, Literal
 # from autogen_agentchat.agents import MessageFilterConfig, PerSourceFilter # Add if using MessageFilterAgent
 import json # For plan parsing in assertions
@@ -113,7 +113,7 @@ async def test_sop_flow_execution_with_real_components(team_name_to_test: str, m
     #    (which receives this empty plan via predefined_top_plan_json),
     #    is responsible for formulating the actual top-level plan upon receiving the initial user task.
     empty_initial_plan: List[Dict[str, Any]] = []
-    logger.info(f"Providing an empty initial_top_plan to build_dynamic_coordinated_graphflow.")
+    logger.info(f"Providing an empty initial_top_plan to build_sop_graphflow.")
 
     # Use a real PlanManager instance, but mock its create_plan method for controlled testing
     real_plan_manager = PlanManager() # Instantiate a real PlanManager
@@ -137,19 +137,19 @@ async def test_sop_flow_execution_with_real_components(team_name_to_test: str, m
     # Replace the real PlanManager's create_plan with our async mock method
     real_plan_manager.create_plan = AsyncMock(side_effect=mock_create_plan_for_leaf_async)
 
-    # 4. Call the actual build_dynamic_coordinated_graphflow function from src/workflows/graphflow.py
+    # 4. Call the actual build_sop_graphflow function from src/workflows/graphflow.py
     try:
-        flow = build_dynamic_coordinated_graphflow(
+        flow = build_sop_graphflow(
             agent_configs=agent_configs_as_dicts,
             initial_top_plan=empty_initial_plan, # Pass an empty list for the plan
             model_client=model_client, # Actual LLM client
             plan_manager_for_agents=real_plan_manager, # Real PlanManager
             nexus_agent_name="Strategist" # Ensure this matches the name in config.yaml
         )
-        logger.info(f"GraphFlow built by build_dynamic_coordinated_graphflow with Nexus: Strategist")
+        logger.info(f"SOP graph built by build_sop_graphflow with SOPManager: Strategist")
     except Exception as e:
-        logger.error(f"TEST FAILED: build_dynamic_coordinated_graphflow call failed. Error: {e}", exc_info=True)
-        pytest.fail(f"build_dynamic_coordinated_graphflow failed: {e}")
+        logger.error(f"TEST FAILED: build_sop_graphflow call failed. Error: {e}", exc_info=True)
+        pytest.fail(f"build_sop_graphflow failed: {e}")
 
     # 5. Run the flow with an initial event and print logs
     initial_event_description = "Urgent: Major fire at city center, multiple buildings affected, request immediate SOP execution."
@@ -196,7 +196,7 @@ async def test_safe_sop_full_flow():
     model_client = load_llm_config_from_toml()
 
     # 2. 构建GraphFlow
-    flow = build_dynamic_coordinated_graphflow(
+    flow = build_sop_graphflow(
         agent_configs=agent_configs,
         initial_top_plan=plan,
         model_client=model_client,

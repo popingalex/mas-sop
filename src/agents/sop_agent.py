@@ -14,7 +14,7 @@ from src.types.plan import Plan, Step
 from ..config.parser import AgentConfig
 from ..types import JudgeDecision
 
-class BaseSOPAgent(AssistantAgent):
+class SOPAgent(AssistantAgent):
     """基础SOP智能体，提供计划工具和基础功能。"""
     
     def __init__(
@@ -27,12 +27,31 @@ class BaseSOPAgent(AssistantAgent):
         system_message: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(name=name, model_client=model_client, system_message=system_message)
+        # 收集所有需要暴露的工具
+        tools = []
+        if hasattr(plan_manager, "update_step_status"):
+            tools.append(plan_manager.update_step_status)
+        if hasattr(plan_manager, "update_task_in_step"):
+            tools.append(plan_manager.update_task_in_step)
+        # 传递tools给父类，确保function_call链路畅通
+        super().__init__(
+            name=name,
+            model_client=model_client,
+            system_message=system_message,
+            tools=tools
+        )
         self.agent_config = agent_config
         self.plan_manager = plan_manager
         self.artifact_manager = artifact_manager
         self.model_client = model_client
-        self._tools: Dict[str, Callable] = {}
+        self.judge_agent = None  # 始终初始化
+        self.system_message = system_message  # 始终初始化
+        # 如果有SOP模板，初始化judge_agent
+        if hasattr(agent_config, 'sop_templates') and agent_config.sop_templates:
+            # 这里可根据实际需要初始化judge_agent
+            pass
+        # 打印所有已注册工具
+        logger.info(f"[{self.name}] 已注册工具: {[t.__name__ if hasattr(t, '__name__') else getattr(t, 'name', str(t)) for t in tools]}")
         
     def register_tool(self, tool: Union[Callable, Any]) -> None:
         """注册一个工具函数或工具对象。
@@ -138,4 +157,40 @@ class BaseSOPAgent(AssistantAgent):
                 f"Exception Type: {type(e)}, Exception: {error_msg}",
                 exc_info=True
             )
-            return f"Error: LLM_CALL_FAILED - {error_msg}" 
+            return f"Error: LLM_CALL_FAILED - {error_msg}"
+
+    async def quick_think(self, task_content: str):
+        """快速思考，调用 judge_agent 判断任务类型。"""
+        if not self.judge_agent:
+            return None
+        async for event in self.judge_agent.run(task_content):
+            if isinstance(event, dict) and "chat_message" in event:
+                msg = event["chat_message"]
+                try:
+                    from src.agents.judge import JudgeDecision
+                    decision = JudgeDecision.model_validate_json(msg.content)
+                    return decision
+                except Exception as e:
+                    from loguru import logger
+                    logger.error(f"{self.name}: JudgeDecision parse error: {e}")
+        return None
+
+    async def on_messages(self, messages: list[BaseChatMessage], cancellation_token=None):
+        logger.error(f"!!! {self.name}: on_messages 被调用 !!!")
+        return await super().on_messages(messages, cancellation_token)
+
+    async def on_messages_stream(self, messages: list[BaseChatMessage], cancellation_token=None, **kwargs):
+        logger.info(f"{self.name}: on_messages_stream called. messages={messages}")
+        # 打印每条收到的消息内容
+        for idx, msg in enumerate(messages):
+            logger.info(f"{self.name}: 收到消息[{idx}] - source: {getattr(msg, 'source', None)}, content: {getattr(msg, 'content', None)}")
+        # 查找NEXUS_ASSIGNMENT任务内容并打印
+        task_content = None
+        for msg in messages:
+            if msg.content and "NEXUS_ASSIGNMENT:" in msg.content:
+                task_content = msg.content
+                break
+        logger.info(f"{self.name}: 传递给LLM的任务内容: {task_content}")
+        # 正确用法：async for + yield 代理父类
+        async for event in super().on_messages_stream(messages, cancellation_token, **kwargs):
+            yield event 

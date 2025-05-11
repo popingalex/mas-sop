@@ -3,7 +3,7 @@ from autogen_agentchat.agents import AssistantAgent, MessageFilterAgent
 from autogen_agentchat.teams import DiGraphBuilder, GraphFlow
 from autogen_agentchat.messages import TextMessage
 from src.config.parser import load_llm_config_from_toml
-from src.workflows.graphflow import build_safe_graphflow
+from src.workflows.graphflow import build_sop_graphflow
 from typing import Dict, Any, List, TypedDict, Literal
 from autogen_agentchat.agents import MessageFilterConfig, PerSourceFilter
 

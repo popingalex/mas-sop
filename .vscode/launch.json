@@ -60,6 +60,21 @@
             "justMyCode": false,
             "console": "integratedTerminal",
             "purpose": ["debug-test"]
+        },
+        {
+            "name": "Python: Debug SOP Team Main",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_team.py",
+            "args": ["teams/safe-sop/config.yaml"],
+            "python": "${command:python.interpreterPath}",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "purpose": ["debug-main"]
         }
     ]
 } 

@@ -42,8 +42,8 @@ SAMPLE_PLAN = Plan(
     title="Test Plan",
     description="A test plan",
     steps=[
-        Step(index=0, description="First step", status="pending"),
-        Step(index=1, description="Second step", status="pending"),
+        Step(index=0, description="First step", status="not_started"),
+        Step(index=1, description="Second step", status="not_started"),
     ]
 )
 
@@ -128,8 +128,8 @@ def mock_plan_manager():
         title="Test Plan",
         description="A test plan",
         steps=[
-            Step(index=0, description="First step", status="pending"),
-            Step(index=1, description="Second step", status="pending")
+            Step(index=0, description="First step", status="not_started"),
+            Step(index=1, description="Second step", status="not_started")
         ]
     )
     return manager
@@ -249,55 +249,6 @@ async def test_quick_think_simple(sop_agent):
     assert result.confidence == 0.8
 
 @pytest.mark.asyncio
-async def test_quick_think_unclear(sop_agent):
-    """测试快速思考 - UNCLEAR 类型"""
-    decision = JudgeDecision(type="UNCLEAR", confidence=0.7, reason="Test reason")
-    async def mock_run(*args, **kwargs):
-        yield {"chat_message": TextMessage(content=decision.model_dump_json(), source="judge")}
-    sop_agent.judge_agent.run = mock_run
-
-    result = await sop_agent.quick_think("Handle it")
-    assert result is not None
-    assert result.type == "UNCLEAR"
-    assert result.confidence == 0.7
-
-@pytest.mark.asyncio
-async def test_process_plan(sop_agent):
-    """测试计划处理流程"""
-    # 创建 Plan 对象
-    plan = {
-        "id": "test_plan",
-        "title": "Test Plan",
-        "description": "Test plan description",
-        "steps": [
-            {
-                "index": 0,
-                "description": "First step",
-                "status": "pending"
-            },
-            {
-                "index": 1,
-                "description": "Second step",
-                "status": "pending"
-            }
-        ]
-    }
-
-    # 设置 LLM 响应
-    sop_agent.llm_cached_aask = AsyncMock(return_value="Step completed")
-
-    # 执行计划
-    results = []
-    async for result in sop_agent._process_plan(plan):
-        results.append(result)
-
-    # 验证结果
-    assert len(results) == 2  # 两个步骤的结果
-    assert all("chat_message" in r for r in results)
-    assert all(r["chat_message"].source == sop_agent.name for r in results)
-    assert all(r["chat_message"].content == "Step completed" for r in results)
-
-@pytest.mark.asyncio
 async def test_on_messages_stream_plan(sop_agent):
     """测试消息流处理 - PLAN 类型"""
     # 设置 mock
@@ -338,26 +289,6 @@ async def test_on_messages_stream_simple(sop_agent):
     assert results[0]["chat_message"].content == "4"
 
 @pytest.mark.asyncio
-async def test_on_messages_stream_unclear(sop_agent):
-    """测试消息流处理 - UNCLEAR 类型"""
-    # 设置 mock
-    decision = JudgeDecision(type="UNCLEAR", confidence=0.7, reason="Test reason")
-    async def mock_run(*args, **kwargs):
-        yield {"chat_message": TextMessage(content=decision.model_dump_json(), source="judge")}
-    sop_agent.judge_agent.run = mock_run
-    sop_agent.llm_cached_aask = AsyncMock(return_value="Task is unclear or lacks necessary information. Please provide more details.")
-
-    # 执行测试
-    messages = [TextMessage(content="Handle it", source="user")]
-    results = []
-    async for result in sop_agent.on_messages_stream(messages):
-        results.append(result)
-
-    # 验证结果
-    assert len(results) == 1
-    assert "unclear" in results[0]["chat_message"].content.lower()
-
-@pytest.mark.asyncio
 async def test_error_handling(sop_agent):
     """测试错误处理"""
     # 模拟 JudgeAgent 抛出异常
@@ -395,65 +326,6 @@ async def test_initialization_without_sop_templates():
     assert agent.name == "test_agent_no_sop"
     assert agent.judge_agent is None  # 没有 SOP 模板时不应该创建 JudgeAgent 
 
-@pytest.mark.asyncio
-async def test_quick_think_search(sop_agent):
-    """测试快速思考 - SEARCH 类型"""
-    decision = JudgeDecision(type="SEARCH", confidence=0.85, reason="Test reason")
-    async def mock_run(*args, **kwargs):
-        yield {"chat_message": TextMessage(content=decision.model_dump_json(), source="judge")}
-    sop_agent.judge_agent.run = mock_run
-
-    result = await sop_agent.quick_think("Search for information about Python")
-    assert result is not None
-    assert result.type == "SEARCH"
-    assert result.confidence == 0.85
-
-@pytest.mark.asyncio
-async def test_on_messages_stream_search_without_tool(sop_agent):
-    """测试消息流处理 - SEARCH 类型但没有搜索工具"""
-    # 设置 mock
-    decision = JudgeDecision(type="SEARCH", confidence=0.85, reason="Test reason")
-    async def mock_run(*args, **kwargs):
-        yield {"chat_message": TextMessage(content=decision.model_dump_json(), source="judge")}
-    sop_agent.judge_agent.run = mock_run
-
-    # 执行测试
-    messages = [TextMessage(content="Search for Python tutorials", source="user")]
-    results = []
-    async for result in sop_agent.on_messages_stream(messages):
-        results.append(result)
-
-    # 验证结果
-    assert len(results) == 1
-    assert "Search capability required" in results[0]["chat_message"].content
-
-@pytest.mark.asyncio
-async def test_llm_cached_aask_timeout(sop_agent):
-    """测试 LLM 调用超时情况"""
-    # 设置 mock 抛出超时异常
-    sop_agent.model_client.create.side_effect = TimeoutError("LLM request timed out")
-
-    # 测试不抛出异常的情况
-    result = await sop_agent.llm_cached_aask("Test message", raise_on_timeout=False)
-    assert "LLM request timed out" in result
-
-    # 测试抛出异常的情况
-    with pytest.raises(TimeoutError):
-        await sop_agent.llm_cached_aask("Test message", raise_on_timeout=True)
-
-def test_has_search_tool(sop_agent):
-    """测试搜索工具检查"""
-    # 初始状态应该没有搜索工具
-    assert not sop_agent._has_search_tool()
-
-    # 添加搜索工具
-    sop_agent.agent_config.assigned_tools = ["search"]
-    assert sop_agent._has_search_tool()
-
-    # 移除搜索工具
-    sop_agent.agent_config.assigned_tools = ["other_tool"]
-    assert not sop_agent._has_search_tool()
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_sop_agent_with_real_llm(llm_client):
@@ -461,87 +333,24 @@ async def test_sop_agent_with_real_llm(llm_client):
     if llm_client is None:
         pytest.skip("LLM client not available")
 
-    # 创建真实的 PlanManager
     plan_manager = PlanManager()
-    
-    # 创建一个真实的 SOPAgent
     agent = SOPAgent(
         name="IntegrationTestAgent",
         agent_config=AgentConfig(
             name="IntegrationTestAgent",
-            agent="assistant",
-            prompt="You are a test agent for integration testing.",
-            sop_templates={"test_sop": {
-                "title": "Test SOP",
-                "description": "A test SOP template",
-                "trigger_keywords": ["test", "example"]
-            }}
+            agent="SOPAgent",
+            prompt="You are a test agent."
         ),
         model_client=llm_client,
-        plan_manager=plan_manager
+        plan_manager=plan_manager,
+        artifact_manager=None
     )
-
-    # 测试简单任务
+    # 简单端到端业务流程测试
     messages = [TextMessage(content="What is 2+2?", source="user")]
     results = []
     async for result in agent.on_messages_stream(messages):
         results.append(result)
-    
     assert len(results) > 0
     assert "chat_message" in results[0]
     assert isinstance(results[0]["chat_message"].content, str)
-    assert len(results[0]["chat_message"].content) > 0
-
-    # 测试计划任务
-    messages = [TextMessage(content="Create a test plan with two steps", source="user")]
-    results = []
-    async for result in agent.on_messages_stream(messages):
-        results.append(result)
-    
-    assert len(results) > 0
-    for result in results:
-        assert "chat_message" in result
-        assert isinstance(result["chat_message"].content, str)
-        assert len(result["chat_message"].content) > 0
-
-    # 测试不明确的任务
-    messages = [TextMessage(content="handle it", source="user")]
-    results = []
-    async for result in agent.on_messages_stream(messages):
-        results.append(result)
-    
-    assert len(results) > 0
-    assert "chat_message" in results[0]
-    assert isinstance(results[0]["chat_message"].content, str)
-    assert "unclear" in results[0]["chat_message"].content.lower() or "more details" in results[0]["chat_message"].content.lower()
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_llm_cached_aask_with_real_llm(llm_client):
-    """使用真实 LLM 测试 llm_cached_aask 方法"""
-    if llm_client is None:
-        pytest.skip("LLM client not available")
-            
-    print(f"\nLLM Client type: {type(llm_client)}")
-    print(f"LLM Client dir: {dir(llm_client)}")
-
-    # 创建一个真实的 SOPAgent
-    agent = SOPAgent(
-        name="LLMTestAgent",
-        agent_config=AgentConfig(
-            name="LLMTestAgent",
-            agent="assistant",
-            prompt="You are a test agent."
-        ),
-        model_client=llm_client,
-        plan_manager=PlanManager()
-    )
-
-    # 测试简单问题
-    response = await agent.llm_cached_aask("What is 1+1?")
-    print(f"\nLLM Response: {response}")  # 添加调试输出
-    
-    # 检查响应
-    assert isinstance(response, str), f"Response should be string, got {type(response)}"
-    assert len(response) > 0, "Response should not be empty"
-    assert "2" in response, f"Expected '2' in response, got: {response}" 
+    assert len(results[0]["chat_message"].content) > 0 

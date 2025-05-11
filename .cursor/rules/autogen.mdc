@@ -6,6 +6,7 @@ alwaysApply: true
 # AutoGen注意事项
 ## 依赖管理
 - 版本以```requirements.txt```为准
+- context7中对应的name为Autogen，对应的仓库地址为https://github.com/microsoft/autogen
 - 每次我纠正你autogen的错误依赖时，都应该追加规则到这个rule文件
 - 正确依赖 
     ```

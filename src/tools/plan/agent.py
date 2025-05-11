@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, AsyncGenerator
 from autogen_agentchat.agents import AssistantAgent
 from autogen_core.models import ChatCompletionClient
 from .manager import PlanManager
@@ -49,7 +49,16 @@ class PlanManagingAgent(AssistantAgent):
                 plan_manager.update_plan_status,
                 plan_manager.add_step,
                 plan_manager.update_step,
-                plan_manager.add_note_to_step,
+                plan_manager.add_task_to_step,
+                plan_manager.update_task_in_step,
+                plan_manager.get_next_pending_step
             ],
             **kwargs
         )
+
+    async def run_stream(self, task: str):
+        """流式运行，yield 每一步 LLM 消息，兼容 test_judge.py 的调试方式。"""
+        # 这里只做简单模拟：yield 最终回复
+        # 如果 model_client 支持流式 create，可在此 yield 每步消息
+        result = await self.run(task=task)
+        yield result
