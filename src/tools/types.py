@@ -1,11 +1,11 @@
-from typing_extensions import TypedDict
-from typing import Any, Optional
+from typing import Optional, Any
+from typing_extensions import NotRequired, TypedDict
 
 class ResponseType(TypedDict):
     """标准工具响应类型。"""
     status: str # 'success' or 'error'
     message: str
-    data: Optional[Any] # Can hold any data depending on the operation
+    data: NotRequired[Any] # 可选字段，为None时可以不传
 
 def success(message: str, data: Optional[Any] = None) -> ResponseType:
     """创建成功的响应。"""

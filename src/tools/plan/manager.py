@@ -322,7 +322,7 @@ class PlanManager:
         tm = self.turn_manager
         if author is None:
             logger.error("update_task 必须传入 author")
-            raise ValueError("update_task 必须传入 author")
+            return error("update_task 必须传入 author")
         logger.info(f"[update_task] 当前turn = {tm.turn}")
         plan = self._plans.get(plan_id)
         if not plan:
@@ -346,6 +346,12 @@ class PlanManager:
         if not target_task:
             logger.error(f"[update_task] 未找到任务: {task_id}")
             return error(ErrorMessages.NOT_FOUND.format(resource="任务", id_str=task_id))
+
+        # 校验：无子计划的任务不允许设置为in_progress
+        if (not hasattr(target_task, 'subplan_id') or not getattr(target_task, 'subplan_id', None)) \
+            and update_data.get('status') == 'in_progress':
+            logger.error(f"[update_task] 普通任务不允许设置为in_progress: plan_id={plan_id}, step_id={step_id}, task_id={task_id}")
+            return error("普通任务（未关联子计划）不允许设置为in_progress，只能直接完成（completed）或保持未开始（not_started）")
 
         # 记录变更前状态
         from_status = getattr(target_task, "status", None)

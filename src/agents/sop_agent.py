@@ -14,7 +14,7 @@ from ..tools.plan.manager import PlanManager
 from src.types.plan import Plan, Step
 from ..config.parser import AgentConfig
 from ..types import JudgeDecision
-from src.tools.plan.agent import PlanManagingAgent
+from src.tools.plan.agent import PlanManagerAgent
 from autogen_agentchat.tools import AgentTool
 
 # 新增TurnManager类
@@ -53,7 +53,7 @@ class SOPAgent(AssistantAgent):
         debug: bool = False,
         **kwargs,
     ):
-        plan_manager_agent = PlanManagingAgent(
+        plan_manager_agent = PlanManagerAgent(
             plan_manager=plan_manager,
             model_client=model_client
         )
@@ -73,6 +73,8 @@ class SOPAgent(AssistantAgent):
             self._system_messages.append(SystemMessage(content=prompt))
         # 3. 行为约束
         self._system_messages.append(SystemMessage(content=self.SOP_BEHAVIOR_REQUIREMENT))
+        # 3.1 任务完成约束
+        self._system_messages.append(SystemMessage(content="你分配到的任务，必须彻底完成（即直接将状态设置为completed），不能只切换到in_progress后就返回。如果任务有子计划，可以设置为in_progress，否则必须一次性完成。"))
         # 4. 调试提示（如有）
         if debug:
             self._system_messages.append(SystemMessage(content=self.SOP_DEBUG_MESSAGE))

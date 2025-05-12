@@ -76,32 +76,15 @@ class FileStorage(Storage):
     def save(self, namespace: str, obj: Any, index: str, name: Optional[str] = None):
         file_path = self._get_file_path(namespace, index, name)
         data = self._to_serializable(obj)
-        # 打印递归类型和内容，帮助定位异常
-        def print_types(d, prefix="root"):
-            if isinstance(d, dict):
-                for k, v in d.items():
-                    print(f"[DEBUG] {prefix}.{k}: type={type(v)}, value={repr(v)[:120]}")
-                    print_types(v, prefix=f"{prefix}.{k}")
-            elif isinstance(d, list):
-                for i, v in enumerate(d):
-                    print(f"[DEBUG] {prefix}[{i}]: type={type(v)}, value={repr(v)[:120]}")
-                    print_types(v, prefix=f"{prefix}[{i}]")
-            else:
-                print(f"[DEBUG] {prefix}: type={type(d)}, value={repr(d)[:120]}")
-        print_types(data)
         # 自动将多行description转为LiteralScalarString
         def convert_multiline(d, prefix="root"):
             if isinstance(d, dict):
                 for k, v in d.items():
                     if k == 'description':
-                        print(f"[DEBUG][desc-before] {prefix}.{k}: type={type(v)}, value={repr(v)[:200]}")
                         if not isinstance(v, str):
-                            print(f"[WARNING][desc] {prefix}.{k} 非str类型，已强制转str！type={type(v)} value={repr(v)[:200]}")
                             d[k] = str(v)
                         if isinstance(d[k], str) and '\n' in d[k]:
-                            print(f"[DEBUG][desc-literal] {prefix}.{k} 赋值LiteralScalarString前: type={type(d[k])}, value={repr(d[k])[:200]}")
                             d[k] = LiteralScalarString(d[k])
-                            print(f"[DEBUG][desc-literal] {prefix}.{k} 赋值LiteralScalarString后: type={type(d[k])}, value={repr(d[k])[:200]}")
                     if isinstance(v, dict):
                         convert_multiline(v, prefix=f"{prefix}.{k}")
                     elif isinstance(v, list):

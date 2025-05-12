@@ -2,7 +2,7 @@
 Plan management tools for MAS-SOP
 """
 
-from .manager import PlanManager, Step
-from .agent import PlanManagingAgent
+from .manager import PlanManager
+from .agent import PlanManagerAgent
 
-__all__ = ['PlanManager', 'Step', 'PlanManagingAgent'] 
+__all__ = ['PlanManager', 'PlanManagerAgent'] 

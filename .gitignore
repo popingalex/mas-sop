@@ -5,3 +5,4 @@ venv/
 *.bak/
 __pycache__/
 logs/
+*.log
