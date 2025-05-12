@@ -34,25 +34,23 @@ class HandoffTarget(BaseModel):
 class AgentConfig(BaseModel):
     """Configuration for a single agent."""
     name: str
-    agent: str # Renamed from role_class
     prompt: Optional[str] = None
     llm_config: Optional[LLMConfig] = None
-    # --- New fields for SOPAgent internal tools --- 
-    sop_templates: Optional[Dict[str, Any]] = None # This seems to be for individual agent, perhaps should be at TeamConfig level?
-    judge_agent_llm_config: Optional[LLMConfig] = None # Optional dedicated LLM config for JudgeAgent
+    sop_templates: Optional[Dict[str, Any]] = None
+    judge_agent_llm_config: Optional[LLMConfig] = None
     expertise_area: Optional[str] = None
     eve_interface_config: Optional[Dict[str, Any]] = None
     actions: Optional[List[str]] = None
     handoffs: Optional[List[HandoffTarget]] = None
-    assigned_tools: Optional[List[str]] = None # Keep for potentially loading external non-AgentTools by name
+    assigned_tools: Optional[List[str]] = None
 
 class TeamConfig(BaseModel):
     """Overall team configuration model."""
     version: str
     name: str
-    task: Optional[str] = None  # 支持YAML中的task字段
-    agents: List[AgentConfig] # Now strictly list of AgentConfig
-    workflows: Optional[List[PlanTemplate]] = None # Changed to List[PlanTemplate]
+    task: Optional[str] = None
+    agents: List[AgentConfig]
+    workflows: Optional[List[PlanTemplate]] = None
     properties: Optional[Dict[str, Any]] = None
     nexus_settings: Optional[Dict[str, Any]] = None
     global_settings: Optional[GlobalSettings] = None

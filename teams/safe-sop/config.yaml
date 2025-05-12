@@ -6,102 +6,121 @@ task: 2024年 7·5华容县洞庭湖决堤
 
 # 基于 docs.ref/chapter3.sop.e1.txt 的 SOP v8.1 更新 - 极简指令和任务目标描述
 workflows:
-  - name: SAFE_SOP_v8.1_Declarative
-    version: "2.1"
-    description: "Standard Operating Procedure for SAFE Emergency Response, focusing on declarative task objectives."
-    steps:
-    - id: "sop_01_init_plan_prep"
-      name: "SOP-01: 事件启动与规划准备"
-      assignee: "Strategist" # Renamed from assignee_role
-      description: | # Overall goal for this phase
+- name: SAFE_SOP_v8.1_Declarative
+  version: "2.1"
+  description: "Standard Operating Procedure for SAFE Emergency Response, focusing on declarative task objectives."
+  steps:
+    - id: "0"
+      name: "Init Plan Prep"
+      label: "事件启动与规划准备"
+      assignee: "Strategist"
+      description: |
         Establish the foundation for the response: log the event, ensure key information elements are complete, and set up the team configuration and overall plan structure.
       tasks:
-        - id: "1.1"
+        - id: "1"
           name: "Initial Event Logging"
-          assignee: "Strategist" # Renamed from assignee_role
+          label: "初始事件记录"
+          assignee: "Strategist"
           description: "Log the initial incoming event information, creating a traceable record."
-        - id: "1.2"
+        - id: "2"
           name: "Key Element Check & Completion"
-          assignee: "Awareness" # Renamed from assignee_role
+          label: "关键信息核查与补全"
+          assignee: "Awareness"
           description: "Verify and complete the predefined set of key information elements based on the initial event record, identifying and filling gaps using available resources. Output a consolidated list."
-        - id: "1.3"
+        - id: "3"
           name: "Form Response Team & Plan SOP"
-          assignee: "Strategist" # Renamed from assignee_role
+          label: "组建响应团队与制定SOP"
+          assignee: "Strategist"
           description: "Determine required expert roles, configure the response team, and instantiate the overall Standard Operating Procedure (SOP) plan for this event."
 
-    - id: "sop_02_sit_aware_risk_assess"
-      name: "SOP-02: 态势理解与风险评估"
-      assignee: "Awareness" # Renamed from assignee_role
-      description: | # Overall goal for this phase
+    - id: "1"
+      name: "Situation Awareness & Risk Assessment"
+      label: "态势理解与风险评估"
+      assignee: "Awareness"
+      description: |
         Develop comprehensive situational awareness and perform risk assessment based on available information. This provides the intelligence foundation for subsequent planning.
       tasks:
-        - id: "2.1"
+        - id: "1"
           name: "Multi-Source Information Integration"
-          assignee: "Awareness" # Renamed from assignee_role
+          label: "多源信息整合"
+          assignee: "Awareness"
           description: "Gather, process, and integrate information from multiple relevant sources to build a comprehensive dataset for situation analysis."
-        - id: "2.2"
+        - id: "2"
           name: "Comprehensive Situation Analysis"
-          assignee: "Awareness" # Renamed from assignee_role
+          label: "综合态势分析"
+          assignee: "Awareness"
           description: "Analyze the integrated information to understand the current situation, including scope, trends, impacts, and vulnerabilities. Output a structured situation analysis."
-        - id: "2.3"
+        - id: "3"
           name: "Comprehensive Risk Assessment"
-          assignee: None # Renamed from assignee_role
+          label: "全面风险评估"
+          assignee: "Awareness"
           description: "Perform a comprehensive risk assessment. This involves an initial broad assessment, a potential decision point for specialized deep assessment by relevant experts, and integration of all findings into a final risk report."
 
-    - id: "sop_03_objectives_coa_dev"
-      name: "SOP-03: 目标确定与方案制定"
-      assignee: "Strategist" # Renamed from assignee_role
-      description: | # Overall goal for this phase
+    - id: "2"
+      name: "Objectives & CoA Development"
+      label: "目标确定与方案制定"
+      assignee: "Strategist"
+      description: |
         Transition from analysis to action planning: define clear response objectives and develop the optimal Course of Action (CoA) to achieve them based on the assessed situation and risks.
       tasks:
-        - id: "3.1"
+        - id: "1"
           name: "Set Action Objectives & Priorities"
-          assignee: "Strategist" # Renamed from assignee_role
+          label: "制定行动目标与优先级"
+          assignee: "Strategist"
           description: "Define specific, measurable, achievable, relevant, and time-bound (SMART) action objectives based on the situation and risk assessment. Prioritize these objectives."
-        - id: "3.2"
+        - id: "2"
           name: "Develop Course of Action (CoA)"
-          assignee: None # Renamed from assignee_role
+          label: "制定行动方案（CoA）"
+          assignee: "FieldExpert"
           description: "Develop a recommended Course of Action (CoA). This involves relevant experts generating potential CoA options based on objectives, followed by evaluation and selection of the most suitable CoA framework."
 
-    - id: "sop_04_resource_plan_final"
-      name: "SOP-04: 资源确认与计划定稿"
-      assignee: "Strategist" # Renamed from assignee_role
-      description: | # Overall goal for this phase
+    - id: "3"
+      name: "Resource Confirmation & Plan Finalization"
+      label: "资源确认与计划定稿"
+      assignee: "Strategist"
+      description: |
         Confirm the resource feasibility of the selected CoA and finalize the complete Emergency Response Plan, ready for execution or simulation.
       tasks:
-        - id: "4.1"
+        - id: "1"
           name: "Confirm Resources for Action Plan"
-          assignee: "Strategist" # Renamed from assignee_role
+          label: "确认行动方案所需资源"
+          assignee: "Strategist"
           description: "Verify the availability of resources required for the selected Course of Action by checking against current resource status. Identify confirmed resources and any gaps."
-        - id: "4.2"
+        - id: "2"
           name: "Finalize Emergency Response Plan"
-          assignee: "Strategist" # Renamed from assignee_role
+          label: "定稿应急响应计划"
+          assignee: "Strategist"
           description: "Consolidate the selected Course of Action and resource confirmation status into the final, actionable Emergency Response Plan."
 
-    - id: "sop_05_ext_sim_exec"
-      name: "SOP-05: (扩展) 行动方案模拟执行"
-      assignee: "Executor" # Renamed from assignee_role
-      description: | # Overall goal for this phase
+    - id: "4"
+      name: "Simulation Execution"
+      label: "行动方案模拟执行"
+      assignee: "Executor"
+      description: |
         (Optional) Execute the finalized Emergency Response Plan within a simulated environment to validate its potential effectiveness and identify issues.
       tasks:
-        - id: "5.1"
+        - id: "1"
           name: "Drive Simulation based on Response Plan"
-          assignee: "Executor" # Renamed from assignee_role
+          label: "基于响应计划驱动仿真"
+          assignee: "Executor"
           description: "Translate the finalized plan into simulation commands, configure and run the simulation in the Execution Validation Environment (EVE), and log the results."
 
-    - id: "sop_06_ext_result_review"
-      name: "SOP-06: (扩展) 结果检查与复盘"
-      assignee: "Strategist" # Renamed from assignee_role
-      description: | # Overall goal for this phase
+    - id: "5"
+      name: "Result Review & Summary"
+      label: "结果检查与复盘"
+      assignee: "Strategist"
+      description: |
         (Optional) Evaluate the results of the simulation execution and conduct a process review to capture lessons learned for future improvement.
       tasks:
-        - id: "6.1"
+        - id: "1"
           name: "Check Simulation Execution Results"
-          assignee: "Strategist" # Renamed from assignee_role
+          label: "检查仿真执行结果"
+          assignee: "Strategist"
           description: "Analyze the simulation execution logs, compare the outcomes against the plan's objectives, and report on the plan's performance in the simulation."
-        - id: "6.2"
+        - id: "2"
           name: "Conduct Process Review & Summary"
-          assignee: "Strategist" # Renamed from assignee_role
+          label: "复盘与总结"
+          assignee: "Strategist"
           description: "Conduct a review of the simulation results and the overall SOP execution process to identify lessons learned and potential improvements. Output a summary report."
 
 global_settings:
@@ -126,65 +145,56 @@ global_settings:
 agents:
   # --- Strategist ---
   - name: Strategist
-    agent: SOPAgent
     actions:
       - Coordinate team effort based on the overall workflow plan.
       - Make strategic decisions (e.g., need for expertise, CoA selection).
       - Integrate information and results from other roles.
       - Ensure overall plan coherence and completion.
       - Manage workflow execution via PlanManager (implicitly).
-    prompt: "收到任务后，直接回复'任务完成'"
-    handoffs:
-      - target: Awareness
-      - target: FieldExpert
-      - target: Executor
-    assigned_tools: []
+    prompt: |
+      You are the ${agent.name} of the SAFE team.
+      Your role is to coordinate the team's effort to execute the assigned emergency response workflow.
+      Leverage your planning, reasoning, integration, and decision-making capabilities to perform assigned tasks and guide the team towards successful completion of the overall goal.
+      Default to using Chinese for generated content unless specified otherwise.
 
   # --- Awareness ---
   - name: Awareness
-    agent: SOPAgent
     actions:
       - Gather, process, and integrate information from multiple sources.
       - Verify and complete key information elements.
       - Perform comprehensive situation analysis.
       - Conduct initial (broad) risk assessments.
       - Generate relevant information assets (KeyElementList, SituationAnalysisReport, etc.).
-    prompt: "收到任务后，直接回复'任务完成'"
-    handoffs:
-      - target: Strategist
-      - target: FieldExpert
-    assigned_tools:
-      - DuckDuckGoSearch.use_search
+    prompt: |
+      You are ${agent.name} in the SAFE team.
+      Your role is to build situational awareness and perform initial risk assessments.
+      Leverage your capabilities in information gathering, processing, fusion, analysis, and preliminary risk identification to execute assigned tasks effectively.
+      Default to using Chinese for generated content unless specified otherwise. 
 
   # --- Field Expert ---
   - name: FieldExpert
-    agent: SOPAgent
     actions:
       - Perform deep, domain-specific risk assessments based on expertise.
       - Generate detailed, domain-relevant Course of Action (CoA) options.
       - Provide specialized analysis and insights when requested.
-    expertise_area: "Fire Safety and Suppression"
-    prompt: "收到任务后，直接回复'任务完成'"
-    handoffs:
-      - target: Strategist
-      - target: Awareness
-    assigned_tools: []
+    prompt: |
+      You are a ${agent.name} in the SAFE team, specializing in **${role_config.expertise_area}**.
+      Your role is to provide deep domain-specific analysis and generate viable action options when assigned relevant tasks.
+      Leverage your expertise in ${role_config.expertise_area} to execute assigned tasks, providing specialized insights and solutions.
+      Default to using Chinese for generated content unless specified otherwise.
 
   # --- Executor ---
   - name: Executor
-    agent: SOPAgent
     actions:
       - Translate finalized response plans into executable simulation commands/configurations.
       - Interface with the Execution Validation Environment (EVE) to run simulations.
       - Monitor simulation execution and log results.
       - Report simulation outcomes.
-    eve_interface_config:
-      type: "StandardEVE_v1"
-      endpoint: "http://localhost:8080/eve_api"
-    prompt: "收到任务后，直接回复'任务完成'"
-    handoffs:
-      - target: Strategist
-    assigned_tools: []
+    prompt: |
+      You are the ${agent.name} in the SAFE team.
+      Your role is to interface with the Execution Validation Environment (EVE) to run simulations based on assigned tasks.
+      Leverage your capability to translate plans and manage the simulation process using the configured EVE interface (${role_config.eve_interface_config.type}).
+      Default to using Chinese for internal logging if applicable; EVE interaction format is dictated by the interface.
 
 # --- 其他可能的全局配置 ---
 # workflow_definition_file: "path/to/workflow.yaml" # 可选：指向单独的工作流文件

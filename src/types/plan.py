@@ -1,24 +1,33 @@
 from typing import List, Optional, Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
+from datetime import datetime
 
 # Status Literals
 PlanStatus = Literal["not_started", "in_progress", "completed", "error"]
 StepStatus = Literal["not_started", "in_progress", "completed", "error"]
 TaskStatus = Literal["not_started", "in_progress", "completed", "error"]
 
+class TaskNote(BaseModel):
+    author: str
+    content: str
+    from_status: Optional[str] = None
+    to_status: Optional[str] = None
+    turn: int  # 轮次，必填
+
 class Task(BaseModel):
     """任务数据结构，嵌套在步骤内"""
-    id: str # 来自原 WorkflowTask
-    name: str    # 来自原 WorkflowTask
-    assignee: Optional[str] = None # 来自原 WorkflowTask
+    id: str # 必填
+    name: str # 必填
+    label: Optional[str] = None  # 可选，任务的中文/友好展示名
+    assignee: str # 必填
     description: str # 来自原 WorkflowTask
-    # 可以根据需要添加其他 Task 特定字段，例如 status
     status: TaskStatus = "not_started" # Use TaskStatus
+    notes: List[TaskNote] = []
 
 class Step(BaseModel):
     """步骤数据结构"""
-    id: Optional[str] = None
-    name: Optional[str] = None
+    id: str
+    name: str
     index: Optional[int] = None
     description: str # 步骤的总体描述
     assignee: Optional[str] = None # 步骤的总体指派人，如果任务没有单独指派人则使用此指派人

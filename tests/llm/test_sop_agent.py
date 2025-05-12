@@ -18,7 +18,6 @@ from src.config.parser import AgentConfig, LLMConfig, load_llm_config_from_toml
 from src.tools.plan.manager import PlanManager, Plan, Step
 from src.tools.artifact_manager import ArtifactManager
 from autogen_agentchat.messages import TextMessage
-from src.types.task import TaskType
 from src.agents.judge import JudgeDecision
 
 # --- Test Data --- #

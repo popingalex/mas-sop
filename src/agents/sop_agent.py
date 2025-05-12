@@ -3,96 +3,115 @@ from pydantic import BaseModel
 from loguru import logger
 import hashlib
 import asyncio
+import logging
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage, BaseChatMessage, ChatMessage
-from autogen_core.models import ChatCompletionClient
+from autogen_core.models import ChatCompletionClient, SystemMessage
 from autogen_core import CancellationToken
 
 from ..tools.plan.manager import PlanManager
 from src.types.plan import Plan, Step
 from ..config.parser import AgentConfig
 from ..types import JudgeDecision
+from src.tools.plan.agent import PlanManagingAgent
+from autogen_agentchat.tools import AgentTool
+
+# 新增TurnManager类
+class TurnManager:
+    def __init__(self) -> None:
+        self._turn = 0
+    @property
+    def turn(self) -> int:
+        return self._turn
+    @turn.setter
+    def turn(self, value: int) -> None:
+        self._turn = value
+    def __iadd__(self, value: int) -> 'TurnManager':
+        self._turn += value
+        return self
+
 
 class SOPAgent(AssistantAgent):
-    """基础SOP智能体，提供计划工具和基础功能。"""
+    """基础SOP智能体，仅注册PlanManagingAgent的标准工具，严格依赖外部注入turn_manager。"""
+    SOP_BEHAVIOR_REQUIREMENT = (
+        "你必须根据自身工具完成被分配的任务，并及时更新任务状态。"
+    )
+    SOP_DEBUG_MESSAGE = (
+        "你不需要真的执行任务，只需假装自己完成了任务并更新状态。"
+    )
     
     def __init__(
         self,
         name: str,
-        agent_config: AgentConfig,
-        model_client: ChatCompletionClient,
+        model_client: Any,
         plan_manager: PlanManager,
+        agent_config: AgentConfig,
+        prompt: Optional[str] = None,  # 只写能力/风格/专业
         artifact_manager: Optional[Any] = None,
-        system_message: Optional[str] = None,
+        turn_manager: TurnManager = None,
+        debug: bool = False,
         **kwargs,
     ):
-        # 收集所有需要暴露的工具
-        tools = []
-        if hasattr(plan_manager, "update_step_status"):
-            tools.append(plan_manager.update_step_status)
-        if hasattr(plan_manager, "update_task_in_step"):
-            tools.append(plan_manager.update_task_in_step)
-        # 传递tools给父类，确保function_call链路畅通
+        plan_manager_agent = PlanManagingAgent(
+            plan_manager=plan_manager,
+            model_client=model_client
+        )
+        tools = kwargs.get('tools', [])
+        tools = list(tools)
+        tools.append(AgentTool(agent=plan_manager_agent))
         super().__init__(
             name=name,
+            tools=tools,
             model_client=model_client,
-            system_message=system_message,
-            tools=tools
+            system_message=None
         )
+        # 1. 自动添加身份设定
+        self._system_messages.append(SystemMessage(content=f"你是{name}"))
+        # 2. 能力/风格/专业描述（如有）
+        if prompt:
+            self._system_messages.append(SystemMessage(content=prompt))
+        # 3. 行为约束
+        self._system_messages.append(SystemMessage(content=self.SOP_BEHAVIOR_REQUIREMENT))
+        # 4. 调试提示（如有）
+        if debug:
+            self._system_messages.append(SystemMessage(content=self.SOP_DEBUG_MESSAGE))
         self.agent_config = agent_config
         self.plan_manager = plan_manager
         self.artifact_manager = artifact_manager
-        self.model_client = model_client
-        self.judge_agent = None  # 始终初始化
-        self.system_message = system_message  # 始终初始化
-        # 如果有SOP模板，初始化judge_agent
-        if hasattr(agent_config, 'sop_templates') and agent_config.sop_templates:
-            # 这里可根据实际需要初始化judge_agent
-            pass
-        # 打印所有已注册工具
+        self.judge_agent = None
+        self.turn_manager = turn_manager
         logger.info(f"[{self.name}] 已注册工具: {[t.__name__ if hasattr(t, '__name__') else getattr(t, 'name', str(t)) for t in tools]}")
-        
-    def register_tool(self, tool: Union[Callable, Any]) -> None:
-        """注册一个工具函数或工具对象。
-        
-        Args:
-            tool (Union[Callable, Any]): 要注册的工具函数或工具对象。
-                如果是函数，函数名将作为工具名。
-                如果是对象，尝试使用 name 属性作为工具名。
-        """
-        if hasattr(tool, 'name'):
-            tool_name = tool.name
-        elif hasattr(tool, '__name__'):
-            tool_name = tool.__name__
-        else:
-            tool_name = str(tool)
-            
-        self._tools[tool_name] = tool
-        logger.info(f"[{self.name}] Registered tool: {tool_name}")
-        
+        logger.info(f"[{self.name}] 当前turn: {self.turn_manager.turn}")
+
     async def call_tool(self, tool_name: str, input: Any, **kwargs) -> Any:
-        """调用已注册的工具。
-        
+        """
+        调用已注册的标准工具。
         Args:
             tool_name: 工具名称
             input: 工具输入参数
-            **kwargs: 其他参数，包括可能的 ctx
-            
+            **kwargs: 其他参数
         Returns:
             Any: 工具执行结果
-            
         Raises:
             ValueError: 如果工具未注册
         """
+        logger = logging.getLogger("SOPAgent.call_tool")
+        logger.info(f"[call_tool] tool_name={tool_name}, input={input}, kwargs={kwargs}")
         if tool_name not in self._tools:
+            logger.error(f"Tool '{tool_name}' not found")
             raise ValueError(f"Tool '{tool_name}' not found")
-        
         tool = self._tools[tool_name]
-        if hasattr(tool, 'run'):
-            return await tool.run(input, **kwargs)
-        else:
-            return await tool(input, **kwargs)
+        try:
+            if hasattr(tool, 'run'):
+                result = await tool.run(input, **kwargs)
+            else:
+                result = await tool(input, **kwargs)
+            logger.info(f"[call_tool] result={result}")
+            return result
+        except Exception as e:
+            logger.error(f"[call_tool] 调用工具 '{tool_name}' 异常: {e}")
+            raise
 
     def _extract_task(self, messages: List[BaseChatMessage]) -> str:
         """从消息列表中提取最后一条用户消息作为任务。"""
@@ -110,55 +129,6 @@ class SOPAgent(AssistantAgent):
             return "search" in assigned_tools
         return False
 
-    async def llm_cached_aask(self, message: str, system_message_override: Optional[str] = None, raise_on_timeout: bool = False) -> str:
-        """通用LLM调用方法，简化版。缓存逻辑可后续添加。"""
-        
-        effective_system_message = system_message_override if system_message_override is not None else (self.system_message or getattr(self.agent_config, 'prompt', '') or "You are a helpful assistant.")
-
-        try:
-            llm_messages = [
-                ChatMessage(role="system", content=effective_system_message),
-                ChatMessage(role="user", content=message)
-            ]
-
-            logger.debug(f"{self.name}: Attempting to call self.model_client.create with messages: {llm_messages}")
-            
-            response = await self.model_client.create(messages=llm_messages)
-            
-            logger.info(f"{self.name}: self.model_client.create successfully returned. Type of response: {type(response)}.")
-
-            if isinstance(response, str):
-                return response
-            elif hasattr(response, 'choices') and response.choices and hasattr(response.choices[0], 'message') and hasattr(response.choices[0].message, 'content'):
-                content = response.choices[0].message.content
-                return str(content) if content is not None else "Error: Response content was None."
-            elif isinstance(response, BaseChatMessage): 
-                return response.content if response.content is not None else "Error: Response content was None."
-            elif isinstance(response, dict):
-                choices = response.get("choices")
-                if choices and isinstance(choices, list) and len(choices) > 0:
-                    first_choice = choices[0]
-                    if isinstance(first_choice, dict):
-                        message_obj = first_choice.get("message")
-                        if isinstance(message_obj, dict):
-                            content_str = message_obj.get("content")
-                            if content_str is not None:
-                                return str(content_str)
-                logger.error(f"{self.name}: Received dict response, but failed to extract content. Response: {str(response)[:500]}")
-                return "Error: LLM_RESPONSE_PARSE_FAILURE - Could not extract content from LLM dictionary response."
-            else:
-                logger.error(f"{self.name}: Unknown response type from self.model_client.create: {type(response)}. Response: {str(response)[:500]}")
-                return f"Error: LLM_RESPONSE_TYPE_UNKNOWN - Unknown response type from LLM client: {type(response)}"
-
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(
-                f"{self.name}: Error in llm_cached_aask (using self.model_client). "
-                f"Exception Type: {type(e)}, Exception: {error_msg}",
-                exc_info=True
-            )
-            return f"Error: LLM_CALL_FAILED - {error_msg}"
-
     async def quick_think(self, task_content: str):
         """快速思考，调用 judge_agent 判断任务类型。"""
         if not self.judge_agent:
@@ -171,26 +141,27 @@ class SOPAgent(AssistantAgent):
                     decision = JudgeDecision.model_validate_json(msg.content)
                     return decision
                 except Exception as e:
-                    from loguru import logger
                     logger.error(f"{self.name}: JudgeDecision parse error: {e}")
         return None
 
     async def on_messages(self, messages: list[BaseChatMessage], cancellation_token=None):
-        logger.error(f"!!! {self.name}: on_messages 被调用 !!!")
+        logger.error(f"!!! {self.name}: on_messages 被调用 (turn={self.turn_manager.turn}) !!!")
         return await super().on_messages(messages, cancellation_token)
 
     async def on_messages_stream(self, messages: list[BaseChatMessage], cancellation_token=None, **kwargs):
-        logger.info(f"{self.name}: on_messages_stream called. messages={messages}")
+        logger.info(f"{self.name}: on_messages_stream called. last message={messages[-1]}, turn={self.turn_manager.turn}")
         # 打印每条收到的消息内容
         for idx, msg in enumerate(messages):
-            logger.info(f"{self.name}: 收到消息[{idx}] - source: {getattr(msg, 'source', None)}, content: {getattr(msg, 'content', None)}")
+            logger.info(f"{self.name}: 收到消息[{idx}] - source: {getattr(msg, 'source', None)}, content: {getattr(msg, 'content', None)}, turn={self.turn_manager.turn}")
         # 查找NEXUS_ASSIGNMENT任务内容并打印
         task_content = None
         for msg in messages:
             if msg.content and "NEXUS_ASSIGNMENT:" in msg.content:
                 task_content = msg.content
                 break
-        logger.info(f"{self.name}: 传递给LLM的任务内容: {task_content}")
+        logger.info(f"{self.name}: 传递给LLM的任务内容: {task_content}, turn={self.turn_manager.turn}")
         # 正确用法：async for + yield 代理父类
         async for event in super().on_messages_stream(messages, cancellation_token, **kwargs):
-            yield event 
+            yield event
+        # 处理完消息后自增turn
+        self.turn_manager.turn += 1 

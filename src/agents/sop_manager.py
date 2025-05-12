@@ -10,7 +10,7 @@ from autogen_agentchat.base import Response
 from autogen_core.models import ChatCompletionClient
 from autogen_core import MessageContext
 
-from .sop_agent import SOPAgent
+from .sop_agent import SOPAgent, TurnManager
 from .judge import judge_agent_tool, JudgeDecision
 from ..config.parser import AgentConfig, TeamConfig
 from ..tools.plan.manager import PlanManager, Step, Plan
@@ -44,7 +44,7 @@ class SOPManager(SOPAgent):
         plan_manager: PlanManager,
         team_config: Optional[TeamConfig] = None,
         artifact_manager: Optional[Any] = None,
-        system_message: Optional[str] = None,
+        turn_manager: Optional[TurnManager] = None,
         **kwargs,
     ):
         super().__init__(
@@ -53,7 +53,7 @@ class SOPManager(SOPAgent):
             model_client=model_client,
             plan_manager=plan_manager,
             artifact_manager=artifact_manager,
-            system_message=system_message,
+            turn_manager=turn_manager,
             **kwargs
         )
         self.team_config = team_config
@@ -67,7 +67,7 @@ class SOPManager(SOPAgent):
         ctx: MessageContext,
         **kwargs,
     ) -> AsyncGenerator[BaseChatMessage, None]:
-        logger.info(f"[{self.name}] on_messages_stream called. messages={messages}, ctx={ctx}, kwargs={kwargs}")
+        logger.info(f"[{self.name}] on_messages_stream called. last message={messages[-1]}, ctx={ctx}, kwargs={kwargs}")
         inner_messages = []
         final_msg = None
         try:
@@ -94,25 +94,27 @@ class SOPManager(SOPAgent):
                             logger.info(f"[{self.name}] plan_manager.create_plan返回: {plan_resp}")
                             if plan_resp and plan_resp.get("status") == "success":
                                 plan_obj = Plan.parse_obj(plan_resp["data"])
-                                if plan_obj.steps:
-                                    # 找到第一个未完成的step和其下第一个未完成的task
-                                    first_pending_step = next((s for s in plan_obj.steps if s.status != "completed"), None)
-                                    first_pending_task = None
-                                    if first_pending_step and first_pending_step.tasks:
-                                        first_pending_task = next((t for t in first_pending_step.tasks if t.status != "completed"), None)
-                                    if first_pending_step and first_pending_task:
-                                        assignment_message = (
-                                            f"HANDOFF_TO_{first_pending_task.assignee or first_pending_step.assignee}\n"
-                                            f"NEXUS_ASSIGNMENT:\n"
-                                            f"PLAN_ID: {plan_obj.id}\n"
-                                            f"PLAN_TITLE: {plan_obj.title}\n"
-                                            f"STEP_ID: {first_pending_step.id}\n"
-                                            f"STEP_NAME: {first_pending_step.name}\n"
-                                            f"TASK_ID: {first_pending_task.id}\n"
-                                            f"TASK_NAME: {first_pending_task.name}\n"
-                                            f"DESCRIPTION: {first_pending_task.description}\n"
-                                            f"--- END OF ASSIGNMENT ---"
-                                        )
+                                plan_id = plan_obj.id
+                                # 推进逻辑：循环分派所有未完成task
+                                pending_resp = self.plan_manager.get_pending(plan_id)
+                                logger.info(f"[{self.name}] get_pending返回: {pending_resp}")
+                                if pending_resp and pending_resp.get("status") == "success":
+                                    data = pending_resp.get("data")
+                                    if data and data.get("status") == "pending":
+                                        step = data["step"]
+                                        task = data["task"]
+                                        # 分派任务前，检查 assignee 是否为空
+                                        if not task.get("assignee"):
+                                            logger.error(f"[SOPManager] 任务 {task.get('id')}（{task.get('name')}）未指定负责人，跳过分派。")
+                                            final_msg = TextMessage(content=f"[SOPManager] 任务 {task.get('id')}（{task.get('name')}）未指定负责人，无法分派。", source=self.name, role="assistant")
+                                            yield final_msg
+                                            inner_messages.append(final_msg)
+                                            return
+                                        assignment_message = f"""
+HANDOFF_TO_{task.get('assignee') or step.get('assignee')}
+plan_id: {plan_id}
+step_id: {step.get('id')}
+task_id: {task.get('id')}""".strip()
                                         final_msg = TextMessage(
                                             content=assignment_message,
                                             source=self.name,
@@ -150,46 +152,49 @@ class SOPManager(SOPAgent):
                         final_msg2 = TextMessage(content="ALL_TASKS_DONE", source=self.name, role="assistant")
                         yield final_msg2
                         inner_messages.append(final_msg2)
-                elif last_message.source != "user" and "TASK_COMPLETE" in last_message_content:
-                    logger.info(f"[{self.name}] 进入TASK_COMPLETE分支")
+                elif last_message.source != "user":
+                    # 只要有新消息（如任务完成），都检查是否还有未完成task
                     try:
-                        plan_resp = self.plan_manager.get_plan()
-                        logger.info(f"[{self.name}] plan_manager.get_plan返回: {plan_resp}")
-                        if plan_resp and plan_resp.get("status") == "success":
-                            plan_obj = Plan.parse_obj(plan_resp["data"])
-                            # 找到下一个未完成的step和其下第一个未完成的task
-                            next_pending_step = next((s for s in plan_obj.steps if s.status != "completed"), None)
-                            next_pending_task = None
-                            if next_pending_step and next_pending_step.tasks:
-                                next_pending_task = next((t for t in next_pending_step.tasks if t.status != "completed"), None)
-                            if next_pending_step and next_pending_task:
-                                assignment_message = (
-                                    f"HANDOFF_TO_{next_pending_task.assignee or next_pending_step.assignee}\n"
-                                    f"NEXUS_ASSIGNMENT:\n"
-                                    f"PLAN_ID: {plan_obj.id}\n"
-                                    f"PLAN_TITLE: {plan_obj.title}\n"
-                                    f"STEP_ID: {next_pending_step.id}\n"
-                                    f"STEP_NAME: {next_pending_step.name}\n"
-                                    f"TASK_ID: {next_pending_task.id}\n"
-                                    f"TASK_NAME: {next_pending_task.name}\n"
-                                    f"DESCRIPTION: {next_pending_task.description}\n"
-                                    f"--- END OF ASSIGNMENT ---"
-                                )
-                                final_msg = TextMessage(
-                                    content=assignment_message,
-                                    source=self.name,
-                                    role="assistant"
-                                )
-                                yield final_msg
-                                inner_messages.append(final_msg)
+                        # 需要获取当前plan_id
+                        plan_id = self.current_plan_id
+                        if not plan_id and hasattr(self, 'plan_manager'):
+                            # 尝试从plan_manager获取最后一个plan
+                            plans = self.plan_manager.list_plans().get('data', [])
+                            if plans:
+                                plan_id = plans[-1]['id']
+                        if not plan_id:
+                            final_msg = TextMessage(content="ALL_TASKS_DONE", source=self.name, role="assistant")
+                            yield final_msg
+                            inner_messages.append(final_msg)
+                        else:
+                            pending_resp = self.plan_manager.get_pending(plan_id)
+                            logger.info(f"[{self.name}] get_pending返回: {pending_resp}")
+                            if pending_resp and pending_resp.get("status") == "success":
+                                data = pending_resp.get("data")
+                                if data and data.get("status") == "pending":
+                                    step = data["step"]
+                                    task = data["task"]
+                                    assignment_message = f"""HANDOFF_TO_{task.get('assignee') or step.get('assignee')}
+根据以下任务索引查询任务并执行
+- plan_id: {plan_id}
+- step_id: {step.get('id')}
+- task_id: {task.get('id')}
+"""
+                                    final_msg = TextMessage(
+                                        content=assignment_message,
+                                        source=self.name,
+                                        role="assistant"
+                                    )
+                                    yield final_msg
+                                    inner_messages.append(final_msg)
+                                else:
+                                    final_msg = TextMessage(content="ALL_TASKS_DONE", source=self.name, role="assistant")
+                                    yield final_msg
+                                    inner_messages.append(final_msg)
                             else:
                                 final_msg = TextMessage(content="ALL_TASKS_DONE", source=self.name, role="assistant")
                                 yield final_msg
                                 inner_messages.append(final_msg)
-                        else:
-                            final_msg = TextMessage(content="ALL_TASKS_DONE", source=self.name, role="assistant")
-                            yield final_msg
-                            inner_messages.append(final_msg)
                     except Exception as e:
                         logger.exception(f"[{self.name}]: 计划推进失败: {e}")
                         final_msg = TextMessage(content=f"[{self.name}] 错误: 计划推进失败 - {e}", source=self.name, role="assistant")
@@ -211,6 +216,8 @@ class SOPManager(SOPAgent):
         # 最后yield一个Response，chat_message为最后一条TextMessage，inner_messages为所有yield过的消息
         if final_msg is not None:
             yield Response(chat_message=final_msg, inner_messages=inner_messages)
+            if hasattr(self, 'turn_manager') and self.turn_manager:
+                self.turn_manager.turn += 1
 
     # ... existing code ...
     # ... rest of the original code ...

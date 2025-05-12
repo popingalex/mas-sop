@@ -28,6 +28,8 @@ class ErrorMessages(str, Enum):
     NOTE_CONTENT_AUTHOR_REQUIRED = "笔记内容 (content) 和作者 (author) 不能为空"
     NOTE_VALIDATION_ERROR = "添加笔记失败：输入数据验证错误 - {error}"
 
+    STEP_NOT_FOUND_BY_ID = "在计划 {plan_id} 中未找到 step_id 为 '{step_id}' 的步骤。"
+
     def format(self, **kwargs) -> str:
         """格式化错误消息。
         

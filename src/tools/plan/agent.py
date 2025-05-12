@@ -16,17 +16,17 @@ class PlanManagingAgent(AssistantAgent):
         system_message: Optional[str] = None,
         **kwargs
     ):
-        """初始化 PlanManagingAgent。
-
-        Args:
-            name: Agent 名称。
-            plan_manager: PlanManager 的实例。如果未提供，将创建一个默认实例。
-            model_client: 用于驱动 Agent 的 LLM 模型客户端。
-            system_message: Agent 的系统消息。
-            **kwargs: 传递给父类 AssistantAgent 的其他参数。
-        """
+        """初始化 PlanManagingAgent。"""
         plan_manager = plan_manager if plan_manager is not None else PlanManager()
         self._plan_manager = plan_manager
+
+        description = (
+            "PlanManagerAgent 负责计划（Plan）、步骤（Step）、任务（Task）的管理。\n"
+            "所有ID均为字符串，不能用索引。\n"
+            "主要接口：update_task(plan_id, step_id, task_id, update_data, author) ...\n"
+            "调用本工具时，必须提供结构化参数，参数名与数据结构一致。\n"
+            "请严格根据 assignment message 提取 plan_id、step_id、task_id、author 等字段。"
+        )
 
         if system_message is None:
             system_message = (
@@ -36,29 +36,16 @@ class PlanManagingAgent(AssistantAgent):
                 "and use the provided tools to perform these actions."
             )
 
-        # 注册PlanManager的真实方法为tools
         super().__init__(
             name=name,
             system_message=system_message,
             model_client=model_client,
-            tools=[
-                plan_manager.create_plan,
-                plan_manager.get_plan,
-                plan_manager.list_plans,
-                plan_manager.delete_plan,
-                plan_manager.update_plan_status,
-                plan_manager.add_step,
-                plan_manager.update_step,
-                plan_manager.add_task_to_step,
-                plan_manager.update_task_in_step,
-                plan_manager.get_next_pending_step
-            ],
+            tools=plan_manager.tool_list(),
+            description=description,
             **kwargs
         )
 
     async def run_stream(self, task: str):
         """流式运行，yield 每一步 LLM 消息，兼容 test_judge.py 的调试方式。"""
-        # 这里只做简单模拟：yield 最终回复
-        # 如果 model_client 支持流式 create，可在此 yield 每步消息
         result = await self.run(task=task)
         yield result
