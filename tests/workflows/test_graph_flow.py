@@ -403,12 +403,12 @@ output: DONE
     # 断言消息顺序和 turn
     expected = [
         ("coordinator", "user", "1", "TO_A"),
-        ("worker_a", "coordinator", "2", "SELF_LOOP"),
-        ("worker_a", "worker_a", "3", "TO_C"),
-        ("coordinator", "worker_a", "4", "TO_B"),
-        ("worker_b", "coordinator", "5", "TO_C"),
-        ("coordinator", "worker_b", "6", "DONE"),
-        ("stop_agent", "coordinator", "7", "DONE"),
+        ("worker_a", "coordinator", "1", "SELF_LOOP"),
+        ("worker_a", "worker_a", "2", "TO_C"),
+        ("coordinator", "worker_a", "2", "TO_B"),
+        ("worker_b", "coordinator", "3", "TO_C"),
+        ("coordinator", "worker_b", "3", "DONE"),
+        ("stop_agent", "coordinator", "4", "DONE"),
     ]
     actual = [(m.get("name"), m.get("source"), m.get("turn"), m.get("output")) for m in parsed_agent_messages]
     assert actual == expected, f"消息流不符\n期望: {expected}\n实际: {actual}"

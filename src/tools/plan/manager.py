@@ -78,29 +78,29 @@ class PlanManager:
         name: Annotated[str, "计划名称"],
         description: Annotated[str, "计划描述"],
         steps: Annotated[Optional[List[Step]], "步骤列表 (Pydantic Step models)"] = None,
-        plan_index: Annotated[str, "计划索引，如'0'"] = "0",
+        id: Annotated[str, "计划唯一标识"] = "0",
         plan_name: Annotated[Optional[str], "计划可选名称"] = None,
-        parent_task: Annotated[Optional[dict], "父任务索引，如{'plan_id':..., 'step_id':..., 'task_id':...}"] = None
+        parent_task: Annotated[Optional[dict], "父任务索引，如{'id':..., 'step_id':..., 'task_id':...}"] = None
     ) -> ResponseType:
         """
         内部通用计划创建方法，可选parent_task用于子计划挂载。
         """
         try:
-            if plan_index in self._plans:
-                return error(ErrorMessages.PLAN_EXISTS.format(plan_id=plan_index))
+            if id in self._plans:
+                return error(ErrorMessages.PLAN_EXISTS.format(plan_id=id))
             new_plan = Plan(
-                id=plan_index,
+                id=id,
                 name=name,
                 description=description,
                 steps=steps if steps is not None else [],
                 cursor=None
             )
             self._update_cursor(new_plan)
-            self._plans[plan_index] = new_plan
-            self.storage.save(self.namespace, new_plan, plan_index, plan_name)
+            self._plans[id] = new_plan
+            self.storage.save(self.namespace, new_plan, id, plan_name)
             # 如有parent_task，挂载到父任务的sub_plans
             if parent_task:
-                p_id, s_id, t_id = parent_task['plan_id'], parent_task['step_id'], parent_task['task_id']
+                p_id, s_id, t_id = parent_task['id'], parent_task['step_id'], parent_task['task_id']
                 plan = self._plans.get(p_id)
                 if plan:
                     step = next((s for s in plan.steps if s.id == s_id), None)
@@ -109,7 +109,7 @@ class PlanManager:
                         if task:
                             if task.sub_plans is None:
                                 task.sub_plans = []
-                            task.sub_plans.append({'id': plan_index, 'name': name})
+                            task.sub_plans.append({'id': id, 'name': name})
                             self._save_plan(plan)
             return success("计划创建成功", data=new_plan.model_dump(mode='json'))
         except ValidationError as ve:
@@ -124,7 +124,7 @@ class PlanManager:
         name: Annotated[str, "计划名称"],
         description: Annotated[str, "计划描述"],
         steps: Annotated[Optional[List[Step]], "步骤列表 (Pydantic Step models)"] = None,
-        plan_index: Annotated[str, "计划索引，如'0'"] = "0",
+        id: Annotated[str, "计划唯一标识"] = "0",
         plan_name: Annotated[Optional[str], "计划可选名称"] = None
     ) -> ResponseType:
         """
@@ -133,21 +133,21 @@ class PlanManager:
             name: 计划名称。
             description: 计划描述。
             steps: 步骤列表。
-            plan_index: 计划索引。
+            id: 计划唯一标识。
             plan_name: 计划可选名称。
         Returns:
             ResponseType: 新建计划信息。
         """
-        return self._create_plan(name, description, steps, plan_index, plan_name, parent_task=None)
+        return self._create_plan(name, description, steps, id, plan_name, parent_task=None)
 
     def create_sub_plan(
         self,
         name: Annotated[str, "子计划名称"],
         description: Annotated[str, "子计划描述"],
         steps: Annotated[Optional[List[Step]], "步骤列表 (Pydantic Step models)"] = None,
-        plan_index: Annotated[str, "子计划索引，如'0.1'"] = "0.1",
+        id: Annotated[str, "子计划唯一标识"] = "0.1",
         plan_name: Annotated[Optional[str], "子计划可选名称"] = None,
-        parent_task: Annotated[dict, "父任务索引，必须包含plan_id, step_id, task_id"] = None
+        parent_task: Annotated[dict, "父任务索引，必须包含id, step_id, task_id"] = None
     ) -> ResponseType:
         """
         创建子计划（仅SOPAgent使用）。
@@ -155,71 +155,30 @@ class PlanManager:
             name: 子计划名称。
             description: 子计划描述。
             steps: 步骤列表。
-            plan_index: 子计划索引。
+            id: 子计划唯一标识。
             plan_name: 子计划可选名称。
-            parent_task: 父任务索引，必须包含plan_id, step_id, task_id。
+            parent_task: 父任务索引，必须包含id, step_id, task_id。
         Returns:
             ResponseType: 新建子计划信息。
         """
         if not parent_task:
-            return error("parent_task为必填，必须包含plan_id, step_id, task_id")
-        return self._create_plan(name, description, steps, plan_index, plan_name, parent_task=parent_task)
+            return error("parent_task为必填，必须包含id, step_id, task_id")
+        return self._create_plan(name, description, steps, id, plan_name, parent_task=parent_task)
 
-    def get_plan(self, plan_index: str) -> ResponseType:
-        """
-        获取指定ID的计划详情。
-
-        Args:
-            plan_index: 计划索引（字符串）。
-        Returns:
-            ResponseType: 包含计划的详细信息（data字段为Plan的dict结构，字段同Plan/Step/Task定义）。
-        """
-        plan = self._plans.get(plan_index)
+    def get_plan(self, id: str) -> ResponseType:
+        plan = self._plans.get(id)
         if not plan:
-            return error(ErrorMessages.NOT_FOUND.format(resource="计划", id_str=plan_index))
+            return error(ErrorMessages.NOT_FOUND.format(resource="计划", id_str=id))
         return success("获取计划成功", data=plan.model_dump(mode='json'))
 
-    def list_plans(self) -> ResponseType:
-        """
-        列出所有计划（极简结构）。
-        cursor: 当前计划的下一个待办任务的索引路径（如 [step_idx, task_idx]），None 表示计划未开始或已全部完成。
-        Returns:
-            ResponseType: plans[cursor, id, name, steps:[id, name, tasks:[id, name, sub_plans[id, name]]]]
-        """
-        plans = []
-        for plan in self._plans.values():
-            plan_dict = {
-                "cursor": plan.cursor,
-                "id": plan.id,
-                "name": getattr(plan, "name", None),
-                "steps": []
-            }
-            for step in plan.steps:
-                step_dict = {"id": step.id, "name": step.name, "tasks": []}
-                for task in step.tasks:
-                    task_dict = {"id": task.id, "name": task.name, "sub_plans": task.sub_plans or []}
-                    step_dict["tasks"].append(task_dict)
-                plan_dict["steps"].append(step_dict)
-            plans.append(plan_dict)
-        return success("获取计划列表成功", data=plans)
-
-    def delete_plan(self, plan_index: str) -> ResponseType:
-        """
-        删除指定ID的计划。
-
-        Args:
-            plan_index: 计划索引（字符串）。
-        Returns:
-            ResponseType: 删除结果。
-        """
-        if plan_index not in self._plans:
-            return error(ErrorMessages.NOT_FOUND.format(resource="计划", id_str=plan_index))
-
-        deleted_plan_name = self._plans[plan_index].name
-        self.storage.delete(self.namespace, plan_index)
-        del self._plans[plan_index]
-        logger.info(f"计划 '{deleted_plan_name}' (ID: {plan_index}) 已删除")
-        return success(f"计划 {plan_index} 已删除")
+    def delete_plan(self, id: str) -> ResponseType:
+        if id not in self._plans:
+            return error(ErrorMessages.NOT_FOUND.format(resource="计划", id_str=id))
+        deleted_plan_name = self._plans[id].name
+        self.storage.delete(self.namespace, id)
+        del self._plans[id]
+        logger.info(f"计划 '{deleted_plan_name}' (ID: {id}) 已删除")
+        return success(f"计划 {id} 已删除")
 
     # --- Step Operations --- #
 
