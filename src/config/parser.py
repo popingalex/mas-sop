@@ -18,8 +18,9 @@ class LLMConfig(BaseModel):
     model: Optional[str] = None
     temperature: Optional[float] = None
     # 可以根据需要添加其他 LLM 配置项
-    class Config:
-        extra = 'allow' # 允许额外字段
+    model_config = {
+        "extra": "allow"  # 允许额外字段
+    }
 
 class GlobalSettings(BaseModel):
     default_llm_config: Optional[LLMConfig] = None

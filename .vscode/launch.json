@@ -75,6 +75,26 @@
             "justMyCode": false,
             "console": "integratedTerminal",
             "purpose": ["debug-main"]
+        },
+        {
+            "name": "Python: Debug Conditional Self Loop Flow",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/workflows/test_graph_flow.py",
+                "-k", "test_conditional_self_loop_flow",
+                "-svv"
+            ],
+            "python": "${command:python.interpreterPath}",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "PYTEST_ADDOPTS": "--no-cov"
+            },
+            "justMyCode": false,
+            "console": "integratedTerminal",
+            "purpose": ["debug-test"]
         }
     ]
 } 

@@ -16,25 +16,15 @@ class DictMessage(TypedDict, total=False):
     output: str
     author: str
 
-def parse_message(msg: TextMessage) -> DictMessage:
-    """简单解析带冒号的键值对消息"""
-    if not isinstance(msg, TextMessage):
-        raise ValueError(f"消息类型错误,期望TextMessage,实际为{type(msg)}")
-        
-    if not isinstance(msg.content, str):
-        raise ValueError(f"消息内容类型错误,期望str,实际为{type(msg.content)}")
-        
-    result = DictMessage(raw=msg.content, author=msg.source)
+def parse_message(msg: TextMessage):
+    result = {}
+    raw_lines = []
     for line in msg.content.strip().split('\n'):
+        raw_lines.append(line)
         if ':' in line:
             key, value = line.split(':', 1)
-            key = key.strip()
-            value = value.strip()
-
-            if value:
-                result[key] = value
-                
-        
+            result[key.strip()] = value.strip()
+    result['__raw_lines__'] = raw_lines
     return result
 
 @pytest.fixture
@@ -155,12 +145,33 @@ output: {output_desc}"""
 
     worker_generic_output_desc = "任务处理中，我会将结果回复给 coordinator。"
 
+    worker_a_prompt = """
+你是 worker_a。
+每次回复都要严格按照如下格式输出（字段顺序不能变）：
+name: worker_a
+source: 上一条消息的 name 字段
+turn: 上一条消息的 turn+1
+output: {output}
+
+规则：
+- 如果这是你第一次收到消息，output 填 SELF_LOOP
+- 如果是你自指后再次收到消息，output 填 TO_C
+output 字段只能为 SELF_LOOP 或 TO_C，必须大写、无空格、无多余内容。
+"""
+    worker_b_prompt = """
+你是 worker_b。
+每次回复都要严格按照如下格式输出（字段顺序不能变）：
+name: worker_b
+source: 上一条消息的 name 字段
+turn: 上一条消息的 turn+1
+output: TO_C
+
+output 字段只能为 TO_C，必须大写、无空格、无多余内容。
+"""
+
     worker_a = AssistantAgent(
         name="worker_a",
-        system_message=base_worker_prompt_template.format(
-            agent_name="worker_a",
-            output_desc=worker_generic_output_desc
-        ),
+        system_message=worker_a_prompt,
         model_client=model_client
     )
 
@@ -175,10 +186,7 @@ output: {output_desc}"""
 
     worker_b = AssistantAgent(
         name="worker_b",
-        system_message=base_worker_prompt_template.format(
-            agent_name="worker_b",
-            output_desc=worker_generic_output_desc
-        ),
+        system_message=worker_b_prompt,
         model_client=model_client
     )
 
@@ -203,8 +211,8 @@ output: {output_desc}"""
 
     builder = DiGraphBuilder()
     builder.add_node(coordinator, activation="any")
-    builder.add_node(worker_a) # 直接使用 worker_a_core
-    builder.add_node(worker_b) # 直接使用 worker_b_core
+    builder.add_node(worker_a, activation="any") # 直接使用 worker_a_core
+    builder.add_node(worker_b, activation="any") # 直接使用 worker_b_core
     builder.add_node(stop_agent)
 
     builder.set_entry_point(coordinator) # 取消注释，恢复显式入口点设置
@@ -276,3 +284,132 @@ output: {output_desc}"""
     assert msg6["name"] == "stop_agent", f"Msg6 名字错误: {msg6['name']}"
 
     print(f"\n=== test_nexus_flow (No MessageFilterAgent, coordinator activation='any', Parsed Events with Asserts) completed run_stream ===")
+
+@pytest.mark.asyncio
+async def test_conditional_self_loop_flow(model_client):
+    """
+    测试条件性自指流程：c > a > a > c > b > c > stop
+    每条消息都带 turn 字段，worker_a 首次自指一次。
+    """
+    from autogen_agentchat.agents import AssistantAgent
+    from autogen_agentchat.teams import DiGraphBuilder, GraphFlow
+    from autogen_agentchat.messages import TextMessage
+
+    coordinator_prompt = """
+你是 {agent_name}。
+每次回复都要包含 turn 字段，turn=上一条消息turn+1（第一条为1）。
+output 字段只能严格为 TO_A、TO_B、DONE 之一，且必须大写、无空格、无多余内容。
+- 第一次收到消息时 output=TO_A
+- 收到 worker_a 返回后 output=TO_B
+- 收到 worker_b 返回后 output=DONE
+回复格式：
+name: {agent_name}
+source: 上一条消息的 name 字段
+turn: 当前轮次
+output: 见上规则
+"""
+    worker_prompt = """
+你是 {agent_name}。
+每次回复都要包含 turn 字段，turn=上一条消息turn+1（第一条为1）。
+output 字段只能严格为 SELF_LOOP、TO_C 之一，且必须大写、无空格、无多余内容。
+- worker_a: 第一次 output=SELF_LOOP（自指），第二次 output=TO_C
+- worker_b: 只 output=TO_C
+回复格式：
+name: {agent_name}
+source: 上一条消息的 name 字段
+turn: 当前轮次
+output: 见上规则
+"""
+    stop_prompt = """
+你是 stop_agent。
+每次回复都要包含 turn 字段，turn=上一条消息turn+1（第一条为1）。
+output 字段只能为 DONE，且必须大写、无空格、无多余内容。
+回复格式：
+name: stop_agent
+source: 上一条消息的 name 字段
+turn: 当前轮次
+output: DONE
+"""
+
+    coordinator = AssistantAgent(
+        name="coordinator",
+        system_message=coordinator_prompt.format(agent_name="coordinator"),
+        model_client=model_client
+    )
+    worker_a = AssistantAgent(
+        name="worker_a",
+        system_message=worker_prompt.format(agent_name="worker_a"),
+        model_client=model_client
+    )
+    worker_b = AssistantAgent(
+        name="worker_b",
+        system_message=worker_prompt.format(agent_name="worker_b"),
+        model_client=model_client
+    )
+    stop_agent = AssistantAgent(
+        name="stop_agent",
+        system_message=stop_prompt,
+        model_client=model_client
+    )
+
+    builder = DiGraphBuilder()
+    builder.add_node(coordinator, activation="any")
+    builder.add_node(worker_a, activation="any")
+    builder.add_node(worker_b, activation="any")
+    builder.add_node(stop_agent)
+    builder.set_entry_point(coordinator)
+
+    builder.add_edge(coordinator, worker_a, condition="TO_A")
+    builder.add_edge(worker_a, worker_a, condition="SELF_LOOP")
+    builder.add_edge(worker_a, coordinator, condition="TO_C")
+    builder.add_edge(coordinator, worker_b, condition="TO_B")
+    builder.add_edge(worker_b, coordinator, condition="TO_C")
+    builder.add_edge(coordinator, stop_agent, condition="DONE")
+
+    flow = GraphFlow(
+        participants=[coordinator, worker_a, worker_b, stop_agent],
+        graph=builder.build()
+    )
+
+    def parse_message(msg: TextMessage):
+        result = {}
+        raw_lines = []
+        for line in msg.content.strip().split('\n'):
+            raw_lines.append(line)
+            if ':' in line:
+                key, value = line.split(':', 1)
+                result[key.strip()] = value.strip()
+        result['__raw_lines__'] = raw_lines
+        return result
+
+    allowed_outputs = {"TO_A", "TO_B", "SELF_LOOP", "TO_C", "DONE"}
+
+    task = TextMessage(content="测试条件性自指流程", source="user")
+    parsed_agent_messages = []
+    async for event in flow.run_stream(task=task):
+        if isinstance(event, TextMessage) and event.source != "user":
+            parsed = parse_message(event)
+            parsed_agent_messages.append(parsed)
+            output = parsed.get('output', '').strip().upper()
+            print(f"调试: name={parsed.get('name')}, source={parsed.get('source')}, turn={parsed.get('turn')}, output={parsed.get('output')}, 原始内容: {event.content}")
+            if output not in allowed_outputs:
+                print(f"[警告] output字段异常: '{parsed.get('output')}'，不在允许集合 {allowed_outputs}")
+                print(f"[原始行] {parsed.get('__raw_lines__')}")
+
+    print("\n[全部消息流]")
+    for idx, m in enumerate(parsed_agent_messages):
+        print(f"[{idx}] name={m.get('name')}, source={m.get('source')}, turn={m.get('turn')}, output={m.get('output')}, 原始: {m.get('__raw_lines__')}")
+
+    # 断言消息顺序和 turn
+    expected = [
+        ("coordinator", "user", "1", "TO_A"),
+        ("worker_a", "coordinator", "2", "SELF_LOOP"),
+        ("worker_a", "worker_a", "3", "TO_C"),
+        ("coordinator", "worker_a", "4", "TO_B"),
+        ("worker_b", "coordinator", "5", "TO_C"),
+        ("coordinator", "worker_b", "6", "DONE"),
+        ("stop_agent", "coordinator", "7", "DONE"),
+    ]
+    actual = [(m.get("name"), m.get("source"), m.get("turn"), m.get("output")) for m in parsed_agent_messages]
+    assert actual == expected, f"消息流不符\n期望: {expected}\n实际: {actual}"
+    print("\n=== test_conditional_self_loop_flow 验证通过 ===")

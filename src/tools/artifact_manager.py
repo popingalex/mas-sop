@@ -16,10 +16,10 @@ class Artifact(BaseModel):
 
     @field_validator('title', 'author')
     @classmethod
-    def not_empty(cls, v, info):
+    def not_empty(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError(f"{info.field_name}不能为空")
-        return v
+            raise ValueError(f"字段不能为空")
+        return v.strip()
 
 class ArtifactManager:
     def __init__(self, turn_manager, storage: Optional[Storage] = None):

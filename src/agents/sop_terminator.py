@@ -3,8 +3,18 @@ from autogen_agentchat.messages import TextMessage, BaseChatMessage
 import logging
 
 class SOPTerminator(AssistantAgent):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    DEFAULT_SYSTEM_PROMPT = """
+你是StopAgent。当SOPManager通知所有任务完成时，你需要确认流程终止。
+请严格按照如下格式回复：
+name: StopAgent
+source: SOPManager
+reason: ALL_TASKS_DONE received.
+output: TERMINATE
+"""
+    def __init__(self, *args, system_message=None, **kwargs):
+        if system_message is None:
+            system_message = self.DEFAULT_SYSTEM_PROMPT
+        super().__init__(*args, system_message=system_message, **kwargs)
 
     async def on_messages_stream(self, messages: list[BaseChatMessage], cancellation_token=None, **kwargs):
         for msg in messages:

@@ -14,7 +14,6 @@ from ..tools.plan.manager import PlanManager
 from src.types.plan import Plan, Step
 from ..config.parser import AgentConfig
 from ..types import JudgeDecision
-from src.tools.plan.agent import PlanManagerAgent
 from autogen_agentchat.tools import AgentTool
 
 # 新增TurnManager类
@@ -31,14 +30,13 @@ class TurnManager:
         self._turn += value
         return self
 
-
 class SOPAgent(AssistantAgent):
-    """基础SOP智能体，仅注册PlanManagingAgent的标准工具，严格依赖外部注入turn_manager。"""
-    SOP_BEHAVIOR_REQUIREMENT = (
-        "你必须根据自身工具完成被分配的任务，并及时更新任务状态。"
-    )
+    """基础SOP智能体，使用PlanManager的标准工具，严格依赖外部注入turn_manager。"""
+    SOP_BEHAVIOR_REQUIREMENT = """
+    根据提供的任务索引，读取分配给自己的任务，执行后更新任务状态
+    """
     SOP_DEBUG_MESSAGE = (
-        "你不需要真的执行任务，只需假装自己完成了任务并更新状态。"
+        "读取任务后直接更新任务状态为完成，不需要真的执行"
     )
     
     def __init__(
@@ -47,19 +45,24 @@ class SOPAgent(AssistantAgent):
         model_client: Any,
         plan_manager: PlanManager,
         agent_config: AgentConfig,
-        prompt: Optional[str] = None,  # 只写能力/风格/专业
+        turn_manager: TurnManager,  # 必须传入，提前到可选参数前
+        prompt: Optional[str] = None,
         artifact_manager: Optional[Any] = None,
-        turn_manager: TurnManager = None,
         debug: bool = False,
         **kwargs,
     ):
-        plan_manager_agent = PlanManagerAgent(
-            plan_manager=plan_manager,
-            model_client=model_client
-        )
+        assert turn_manager is not None, "turn_manager 不能为空，必须传入 TurnManager 实例"
+        # 只注册LLM需要的推进/查询/更新类方法为工具
+        plan_tools = [
+            plan_manager.create_sub_plan,  # 如果允许LLM拆分子计划
+            plan_manager.list_plans,
+            plan_manager.get_task,
+            plan_manager.update_task,
+        ]
         tools = kwargs.get('tools', [])
         tools = list(tools)
-        tools.append(AgentTool(agent=plan_manager_agent))
+        tools.extend(plan_tools)
+        
         super().__init__(
             name=name,
             tools=tools,
@@ -73,8 +76,6 @@ class SOPAgent(AssistantAgent):
             self._system_messages.append(SystemMessage(content=prompt))
         # 3. 行为约束
         self._system_messages.append(SystemMessage(content=self.SOP_BEHAVIOR_REQUIREMENT))
-        # 3.1 任务完成约束
-        self._system_messages.append(SystemMessage(content="你分配到的任务，必须彻底完成（即直接将状态设置为completed），不能只切换到in_progress后就返回。如果任务有子计划，可以设置为in_progress，否则必须一次性完成。"))
         # 4. 调试提示（如有）
         if debug:
             self._system_messages.append(SystemMessage(content=self.SOP_DEBUG_MESSAGE))
@@ -83,37 +84,9 @@ class SOPAgent(AssistantAgent):
         self.artifact_manager = artifact_manager
         self.judge_agent = None
         self.turn_manager = turn_manager
-        logger.info(f"[{self.name}] 已注册工具: {[t.__name__ if hasattr(t, '__name__') else getattr(t, 'name', str(t)) for t in tools]}")
+        logger.info(f"[{self.name}] 已注册工具: {[t.__name__ if hasattr(t, '__name__') else str(t) for t in tools]}")
         logger.info(f"[{self.name}] 当前turn: {self.turn_manager.turn}")
 
-    async def call_tool(self, tool_name: str, input: Any, **kwargs) -> Any:
-        """
-        调用已注册的标准工具。
-        Args:
-            tool_name: 工具名称
-            input: 工具输入参数
-            **kwargs: 其他参数
-        Returns:
-            Any: 工具执行结果
-        Raises:
-            ValueError: 如果工具未注册
-        """
-        logger = logging.getLogger("SOPAgent.call_tool")
-        logger.info(f"[call_tool] tool_name={tool_name}, input={input}, kwargs={kwargs}")
-        if tool_name not in self._tools:
-            logger.error(f"Tool '{tool_name}' not found")
-            raise ValueError(f"Tool '{tool_name}' not found")
-        tool = self._tools[tool_name]
-        try:
-            if hasattr(tool, 'run'):
-                result = await tool.run(input, **kwargs)
-            else:
-                result = await tool(input, **kwargs)
-            logger.info(f"[call_tool] result={result}")
-            return result
-        except Exception as e:
-            logger.error(f"[call_tool] 调用工具 '{tool_name}' 异常: {e}")
-            raise
 
     def _extract_task(self, messages: List[BaseChatMessage]) -> str:
         """从消息列表中提取最后一条用户消息作为任务。"""
@@ -151,17 +124,17 @@ class SOPAgent(AssistantAgent):
         return await super().on_messages(messages, cancellation_token)
 
     async def on_messages_stream(self, messages: list[BaseChatMessage], cancellation_token=None, **kwargs):
-        logger.info(f"{self.name}: on_messages_stream called. last message={messages[-1]}, turn={self.turn_manager.turn}")
+        # logger.info(f"{self.name}: on_messages_stream called. last message={messages[-1]}, turn={self.turn_manager.turn}")
         # 打印每条收到的消息内容
-        for idx, msg in enumerate(messages):
-            logger.info(f"{self.name}: 收到消息[{idx}] - source: {getattr(msg, 'source', None)}, content: {getattr(msg, 'content', None)}, turn={self.turn_manager.turn}")
+        # for idx, msg in enumerate(messages):
+        #     logger.info(f"{self.name}: 收到消息[{idx}] - source: {getattr(msg, 'source', None)}, content: {getattr(msg, 'content', None)}, turn={self.turn_manager.turn}")
         # 查找NEXUS_ASSIGNMENT任务内容并打印
-        task_content = None
-        for msg in messages:
-            if msg.content and "NEXUS_ASSIGNMENT:" in msg.content:
-                task_content = msg.content
-                break
-        logger.info(f"{self.name}: 传递给LLM的任务内容: {task_content}, turn={self.turn_manager.turn}")
+        # task_content = None
+        # for msg in messages:
+        #     if msg.content and "NEXUS_ASSIGNMENT:" in msg.content:
+        #         task_content = msg.content
+        #         break
+        # logger.info(f"{self.name}: 传递给LLM的任务内容: {task_content}, turn={self.turn_manager.turn}")
         # 正确用法：async for + yield 代理父类
         async for event in super().on_messages_stream(messages, cancellation_token, **kwargs):
             yield event

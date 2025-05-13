@@ -35,7 +35,7 @@ class PlanManager:
                         failed_count += 1
                         continue
                     
-                    plan = Plan.model_validate(data)
+                    plan = Plan.model_validate_json(data) if isinstance(data, str) else Plan.model_validate(data)
                     temp_plans[plan.id] = plan
                     loaded_count += 1
                 except ValidationError as ve:
@@ -64,49 +64,53 @@ class PlanManager:
 
     # --- Plan Operations --- #
 
-    def create_plan(
+    def _update_cursor(self, plan: Plan) -> None:
+        """自动更新计划的cursor字段，指向下一个待办任务的索引路径（如 [step_idx, task_idx]），全部完成时为None。"""
+        for step in plan.steps:
+            for task in step.tasks:
+                if task.status != "completed":
+                    plan.cursor = [step.id, task.id]
+                    return
+        plan.cursor = None
+
+    def _create_plan(
         self,
-        title: Annotated[str, "计划标题"],
+        name: Annotated[str, "计划名称"],
         description: Annotated[str, "计划描述"],
         steps: Annotated[Optional[List[Step]], "步骤列表 (Pydantic Step models)"] = None,
         plan_index: Annotated[str, "计划索引，如'0'"] = "0",
-        plan_name: Annotated[Optional[str], "计划可选名称"] = None
+        plan_name: Annotated[Optional[str], "计划可选名称"] = None,
+        parent_task: Annotated[Optional[dict], "父任务索引，如{'plan_id':..., 'step_id':..., 'task_id':...}"] = None
     ) -> ResponseType:
         """
-        创建新计划，使用Pydantic模型。
-
-        Args:
-            title: 计划标题。
-            description: 计划描述。
-            steps: 步骤列表（List[Step]，可选），每个步骤支持以下字段：
-                - id: 步骤唯一标识（可选）
-                - name: 步骤名称（可选）
-                - description: 步骤描述（必填）
-                - assignee: 步骤指派人（可选）
-                - status: 步骤状态（not_started, in_progress, completed, error，可选，默认not_started）
-                - tasks: 任务列表（List[Task]，可选），每个任务支持：
-                    - id: 任务唯一标识
-                    - name: 任务名称
-                    - description: 任务描述
-                    - assignee: 任务指派人（可选）
-                    - status: 任务状态（not_started, in_progress, completed, error，可选，默认not_started）
-            plan_index: 计划索引，如'0'。
-            plan_name: 计划可选名称。
-
-        Returns:
-            ResponseType: 包含新建计划的详细信息（data字段为Plan的dict结构）。
+        内部通用计划创建方法，可选parent_task用于子计划挂载。
         """
         try:
             if plan_index in self._plans:
                 return error(ErrorMessages.PLAN_EXISTS.format(plan_id=plan_index))
             new_plan = Plan(
                 id=plan_index,
-                title=title,
+                name=name,
                 description=description,
-                steps=steps if steps is not None else []
+                steps=steps if steps is not None else [],
+                cursor=None
             )
+            self._update_cursor(new_plan)
             self._plans[plan_index] = new_plan
             self.storage.save(self.namespace, new_plan, plan_index, plan_name)
+            # 如有parent_task，挂载到父任务的sub_plans
+            if parent_task:
+                p_id, s_id, t_id = parent_task['plan_id'], parent_task['step_id'], parent_task['task_id']
+                plan = self._plans.get(p_id)
+                if plan:
+                    step = next((s for s in plan.steps if s.id == s_id), None)
+                    if step:
+                        task = next((t for t in step.tasks if t.id == t_id), None)
+                        if task:
+                            if task.sub_plans is None:
+                                task.sub_plans = []
+                            task.sub_plans.append({'id': plan_index, 'name': name})
+                            self._save_plan(plan)
             return success("计划创建成功", data=new_plan.model_dump(mode='json'))
         except ValidationError as ve:
             logger.error(f"创建计划时Pydantic校验失败: {ve}")
@@ -114,6 +118,52 @@ class PlanManager:
         except Exception as e:
             logger.exception(f"创建计划时发生未知错误: {e}")
             return error(str(e))
+
+    def create_plan(
+        self,
+        name: Annotated[str, "计划名称"],
+        description: Annotated[str, "计划描述"],
+        steps: Annotated[Optional[List[Step]], "步骤列表 (Pydantic Step models)"] = None,
+        plan_index: Annotated[str, "计划索引，如'0'"] = "0",
+        plan_name: Annotated[Optional[str], "计划可选名称"] = None
+    ) -> ResponseType:
+        """
+        创建新计划（仅SOPManager使用）。
+        Args:
+            name: 计划名称。
+            description: 计划描述。
+            steps: 步骤列表。
+            plan_index: 计划索引。
+            plan_name: 计划可选名称。
+        Returns:
+            ResponseType: 新建计划信息。
+        """
+        return self._create_plan(name, description, steps, plan_index, plan_name, parent_task=None)
+
+    def create_sub_plan(
+        self,
+        name: Annotated[str, "子计划名称"],
+        description: Annotated[str, "子计划描述"],
+        steps: Annotated[Optional[List[Step]], "步骤列表 (Pydantic Step models)"] = None,
+        plan_index: Annotated[str, "子计划索引，如'0.1'"] = "0.1",
+        plan_name: Annotated[Optional[str], "子计划可选名称"] = None,
+        parent_task: Annotated[dict, "父任务索引，必须包含plan_id, step_id, task_id"] = None
+    ) -> ResponseType:
+        """
+        创建子计划（仅SOPAgent使用）。
+        Args:
+            name: 子计划名称。
+            description: 子计划描述。
+            steps: 步骤列表。
+            plan_index: 子计划索引。
+            plan_name: 子计划可选名称。
+            parent_task: 父任务索引，必须包含plan_id, step_id, task_id。
+        Returns:
+            ResponseType: 新建子计划信息。
+        """
+        if not parent_task:
+            return error("parent_task为必填，必须包含plan_id, step_id, task_id")
+        return self._create_plan(name, description, steps, plan_index, plan_name, parent_task=parent_task)
 
     def get_plan(self, plan_index: str) -> ResponseType:
         """
@@ -131,14 +181,27 @@ class PlanManager:
 
     def list_plans(self) -> ResponseType:
         """
-        列出所有计划。
-
+        列出所有计划（极简结构）。
+        cursor: 当前计划的下一个待办任务的索引路径（如 [step_idx, task_idx]），None 表示计划未开始或已全部完成。
         Returns:
-            ResponseType: 包含所有计划的列表（data字段为List[Plan]的dict结构，字段同Plan/Step/Task定义）。
+            ResponseType: plans[cursor, id, name, steps:[id, name, tasks:[id, name, sub_plans[id, name]]]]
         """
-        plan_list = [p.model_dump(mode='json') for p in self._plans.values()]
-        logger.info(f"列出 {len(plan_list)} 个计划")
-        return success("获取计划列表成功", data=plan_list)
+        plans = []
+        for plan in self._plans.values():
+            plan_dict = {
+                "cursor": plan.cursor,
+                "id": plan.id,
+                "name": getattr(plan, "name", None),
+                "steps": []
+            }
+            for step in plan.steps:
+                step_dict = {"id": step.id, "name": step.name, "tasks": []}
+                for task in step.tasks:
+                    task_dict = {"id": task.id, "name": task.name, "sub_plans": task.sub_plans or []}
+                    step_dict["tasks"].append(task_dict)
+                plan_dict["steps"].append(step_dict)
+            plans.append(plan_dict)
+        return success("获取计划列表成功", data=plans)
 
     def delete_plan(self, plan_index: str) -> ResponseType:
         """
@@ -152,10 +215,10 @@ class PlanManager:
         if plan_index not in self._plans:
             return error(ErrorMessages.NOT_FOUND.format(resource="计划", id_str=plan_index))
 
-        deleted_plan_title = self._plans[plan_index].title
+        deleted_plan_name = self._plans[plan_index].name
         self.storage.delete(self.namespace, plan_index)
         del self._plans[plan_index]
-        logger.info(f"计划 '{deleted_plan_title}' (ID: {plan_index}) 已删除")
+        logger.info(f"计划 '{deleted_plan_name}' (ID: {plan_index}) 已删除")
         return success(f"计划 {plan_index} 已删除")
 
     # --- Step Operations --- #
@@ -186,6 +249,15 @@ class PlanManager:
         plan = self._plans.get(plan_id_str)
         if not plan:
             return error(ErrorMessages.NOT_FOUND.format(resource="计划", id_str=plan_id_str))
+        
+        # 检查索引是否越界
+        if insert_after_index is not None and (insert_after_index < -1 or insert_after_index >= len(plan.steps)):
+            return error(ErrorMessages.PLAN_STEP_INDEX_OUT_OF_RANGE.format(
+                index=insert_after_index,
+                plan_id=plan_id_str,
+                total=len(plan.steps)
+            ))
+
         new_step = step_data.model_copy(deep=True)
         # 自动生成step id：序号_名称
         step_index = len(plan.steps) if insert_after_index is None else insert_after_index + 1
@@ -197,8 +269,9 @@ class PlanManager:
         for i, s in enumerate(plan.steps):
             s.index = i
         self._recalculate_plan_status(plan_id_str)
+        self._update_cursor(plan)
         self._save_plan(plan)
-        logger.info(f"步骤 '{new_step.description[:30]}...' 已添加到计划 '{plan.title}'")
+        logger.info(f"步骤 '{new_step.description[:30]}...' 已添加到计划 '{plan.name}'")
         return success("步骤添加成功", data=plan.model_dump(mode='json'))
 
     def _recalculate_plan_status(self, plan_id: str) -> None:
@@ -228,7 +301,7 @@ class PlanManager:
         # else: plan status remains unchanged if no clear transition
 
         if plan.status != original_status:
-            logger.info(f"计划 '{plan.title}' (ID: {plan_id}) 状态根据步骤自动更新为: {plan.status}")
+            logger.info(f"计划 '{plan.name}' (ID: {plan_id}) 状态根据步骤自动更新为: {plan.status}")
             # _save_to_file() will be called by the public method that triggered this recalculation
             # self._save_to_file() # Avoid double saving if called from a method that already saves
 
@@ -274,61 +347,39 @@ class PlanManager:
         task_index = len(target_step.tasks)
         new_task.id = new_task.id or normalize_id(f"{target_step.index+1}.{task_index+1}", new_task.name)
         target_step.tasks.append(new_task)
+        self._update_cursor(plan)
         self._save_plan(plan)
-        logger.info(f"任务 '{new_task.name}' 已添加到计划 '{plan.title}' 的步骤 '{target_step.id or target_step.index}'")
+        logger.info(f"任务 '{new_task.name}' 已添加到计划 '{plan.name}' 的步骤 '{target_step.id or target_step.index}'")
         return success("任务添加成功", data=target_step.model_dump(mode='json'))
         
     def update_task(
         self,
-        plan_id: str,
-        step_id: str,
-        task_id: str,
-        update_data: Dict[str, Any],
-        author: str
+        plan_id: Annotated[str, "计划ID"],
+        step_id: Annotated[str, "步骤ID"],
+        task_id: Annotated[str, "任务ID"],
+        update_data: Annotated[Dict[str, Any], "要更新的字段及新值"],
+        author: Annotated[str, "操作人名称"]
     ) -> ResponseType:
         """
-        更新指定计划下某步骤的某个任务，并自动追加操作记录（note）。
-
+        更新指定计划下某步骤的某个任务，并自动追加操作记录（note），支持sub_plan_id关联。
         Args:
-            plan_id (str): 计划ID。
-            step_id (str): 步骤ID。
-            task_id (str): 任务ID。
-            update_data (dict): 要更新的字段及新值，支持如下字段：
-                - status (str): 任务状态（如 'completed', 'in_progress', 'not_started', 'error'）。
-                - assignee (str): 任务负责人。
-                - name (str): 任务名称。
-                - description (str): 任务描述。
-                - 其他Task模型支持的字段。
-            author (str): 操作人名称，必须传入。
-
+            plan_id: 计划ID。
+            step_id: 步骤ID。
+            task_id: 任务ID。
+            update_data: 要更新的字段及新值。
+            author: 操作人名称。
         Returns:
-            ResponseType: 更新结果，包含任务最新状态和完整notes列表。
-
-        说明:
-            - 每次调用都会自动追加一条note，记录author、from_status、to_status、turn等。
-            - notes为必填，不能为[]。
-            - 仅支持已定义的任务字段更新。
-
-        示例:
-            update_task(
-                plan_id="0",
-                step_id="1",
-                task_id="2",
-                update_data={"status": "completed", "assignee": "Strategist"},
-                author="Strategist"
-            )
+            ResponseType: 更新结果。
         """
         logger.info(f"[update_task] called with plan_id={plan_id}, step_id={step_id}, task_id={task_id}, update_data={update_data}, author={author}")
         tm = self.turn_manager
         if author is None:
             logger.error("update_task 必须传入 author")
             return error("update_task 必须传入 author")
-        logger.info(f"[update_task] 当前turn = {tm.turn}")
         plan = self._plans.get(plan_id)
         if not plan:
             logger.error(f"[update_task] 未找到计划: {plan_id}")
             return error(ErrorMessages.NOT_FOUND.format(resource="计划", id_str=plan_id))
-
         target_step: Optional[Step] = None
         for s in plan.steps:
             if s.id == step_id:
@@ -337,7 +388,6 @@ class PlanManager:
         if not target_step:
             logger.error(f"[update_task] 未找到步骤: {step_id}")
             return error(ErrorMessages.NOT_FOUND.format(resource="步骤", id_str=step_id))
-
         target_task: Optional[Task] = None
         for t in target_step.tasks:
             if t.id == task_id:
@@ -346,29 +396,23 @@ class PlanManager:
         if not target_task:
             logger.error(f"[update_task] 未找到任务: {task_id}")
             return error(ErrorMessages.NOT_FOUND.format(resource="任务", id_str=task_id))
-
-        # 校验：无子计划的任务不允许设置为in_progress
-        if (not hasattr(target_task, 'subplan_id') or not getattr(target_task, 'subplan_id', None)) \
-            and update_data.get('status') == 'in_progress':
-            logger.error(f"[update_task] 普通任务不允许设置为in_progress: plan_id={plan_id}, step_id={step_id}, task_id={task_id}")
-            return error("普通任务（未关联子计划）不允许设置为in_progress，只能直接完成（completed）或保持未开始（not_started）")
-
-        # 记录变更前状态
-        from_status = getattr(target_task, "status", None)
-        # 执行字段更新
+        # 字段更新
         updated_fields = []
         for k, v in update_data.items():
-            if hasattr(target_task, k):
+            if k == "sub_plan_id":
+                # 关联子计划
+                if target_task.sub_plans is None:
+                    target_task.sub_plans = []
+                # 只添加id，name需由调用方补充或后续完善
+                target_task.sub_plans.append({"id": v, "name": None})
+                updated_fields.append(k)
+            elif hasattr(target_task, k):
                 setattr(target_task, k, v)
                 updated_fields.append(k)
-        # 记录变更后状态
-        to_status = getattr(target_task, "status", None)
         # notes内容
         note = {
             "author": author,
             "content": "任务状态/内容变更",
-            "from_status": from_status,
-            "to_status": to_status,
             "turn": tm.turn
         }
         if not hasattr(target_task, "notes") or target_task.notes is None:
@@ -377,6 +421,7 @@ class PlanManager:
         logger.debug(f"[update_task] notes追加: {note}")
         logger.info(f"[update_task] after: task.status={target_task.status}, updated_fields={updated_fields}")
         self._save_plan(plan)
+        self._update_cursor(plan)
         return success({"id": target_task.id, "name": target_task.name, "status": target_task.status, "notes": target_task.notes})
 
     def _recalculate_step_status(self, step: Step) -> None:
@@ -454,19 +499,18 @@ class PlanManager:
 
     def get_task(
         self,
-        plan_id: str,
-        step_id: str,
-        task_id: str
+        plan_id: Annotated[str, "计划ID"],
+        step_id: Annotated[str, "步骤ID"],
+        task_id: Annotated[str, "任务ID"]
     ) -> ResponseType:
         """
-        根据计划ID、步骤ID、任务ID查找并返回任务内容。
-
+        获取指定任务详细信息，并补充plan_info/step_info。
         Args:
-            plan_id (str): 计划ID。
-            step_id (str): 步骤ID。
-            task_id (str): 任务ID。
+            plan_id: 计划ID。
+            step_id: 步骤ID。
+            task_id: 任务ID。
         Returns:
-            ResponseType: 查询结果，data字段为任务内容（dict），未找到时返回错误信息。
+            ResponseType: 任务详细信息+plan_info/step_info。
         """
         plan = self._plans.get(plan_id)
         if not plan:
@@ -477,19 +521,19 @@ class PlanManager:
         task = next((t for t in step.tasks if t.id == task_id), None)
         if not task:
             return error(ErrorMessages.NOT_FOUND.format(resource="任务", id_str=task_id))
-        return success("获取任务成功", data=task.model_dump(mode='json'))
+        return success("获取任务成功", data={
+            "task": task.model_dump(mode='json'),
+            "plan_info": {"name": getattr(plan, "name", None), "label": None, "description": plan.description},
+            "step_info": {"name": step.name, "label": None, "description": step.description}
+        })
 
-    def tool_list(self) -> List[Callable]:
-        """返回PlanManager可用的工具方法对象集合。"""
+    def tool_list(self) -> list:
+        """只返回新API工具方法对象集合。"""
         return [
             self.create_plan,
-            self.get_plan,
+            self.create_sub_plan,
             self.list_plans,
-            self.delete_plan,
-            self.add_step,
-            self.add_task_to_step,
-            self.update_task,
-            self.get_pending,
             self.get_task,
+            self.update_task,
         ]
     

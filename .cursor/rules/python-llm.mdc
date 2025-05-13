@@ -61,6 +61,7 @@ alwaysApply: false
 - **LLM Prompt Engineering:**  Dedicate a module or files for managing Prompt templates with version control.
 - **Context Handling:** Implement efficient context management for conversations, using suitable data structures like deques.
 - **智能体开发:** 避免在结构化数据中使用null，有些垃圾语言（例如python）解析不了。
+- **提示词:** 提示词中以中文为主，关键字、保留字使用英文，并辅以中文翻译。
 
 ## 5. Performance Optimization
 - **Asynchronous Programming:**  Leverage `async` and `await` for I/O-bound operations to maximize concurrency.

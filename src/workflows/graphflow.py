@@ -19,40 +19,7 @@ from src.agents.sop_terminator import SOPTerminator
 
 
 # --- 系统提示词模板 ---
-
-SOP_MANAGER_SYSTEM_PROMPT_TEMPLATE_FOR_FRAMEWORK = """
-You are a SOPManager Agent. Your primary role is to manage a multi-step plan and coordinate other agents.
-
-INITIAL TASK HANDLING:
-When you receive an initial task description from the user (source: 'user'), your first responsibility is to formulate a structured top-level plan.
-For the initial interaction, you MUST use the following predefined JSON plan and embed it into your 'reason' field: {predefined_top_plan_json}
-Then, based on this plan, identify the first pending task and its assignee.
-Your output MUST be "HANDOFF_TO_[AssigneeNameFromPlan]".
-
-SUBSEQUENT TASK HANDLING:
-When you receive a message from a worker agent with "output: TASK_COMPLETE":
-1. Update the status of their completed task to "completed" in your current plan (maintain in 'reason').
-2. Find the next pending task.
-3. If found, output "HANDOFF_TO_[AssigneeNameOfNextTask]".
-4. If no more tasks are "pending" (all are "completed"), output "ALL_TASKS_DONE".
-
-Always include the FULL and CURRENT plan (as a valid JSON list of dictionaries) in your 'reason' field. Each task object in the plan should have "id", "task_id", "assignee", "status", "description".
-
-Respond STRICTLY in format:
-name: SOPManager
-source: [sender_name or 'user']
-reason: Current Plan: [JSON plan string]. [Notes].
-output: [HANDOFF_TO_AssigneeName | ALL_TASKS_DONE]
-"""
-
-STOP_AGENT_SYSTEM_PROMPT_TEMPLATE_FOR_FRAMEWORK = """
-You are StopAgent. Confirm plan completion when told by SOPManager.
-Respond STRICTLY in format:
-name: StopAgent
-source: SOPManager
-reason: ALL_TASKS_DONE received.
-output: TERMINATE
-"""
+# 已废弃，移除
 
 def build_sop_graphflow(
     team_config: TeamConfig, # 直接接收TeamConfig Pydantic模型
@@ -117,7 +84,6 @@ def build_sop_graphflow(
 
     stop_agent_instance = SOPTerminator(
         name="SOPTerminator",
-        system_message=STOP_AGENT_SYSTEM_PROMPT_TEMPLATE_FOR_FRAMEWORK.format(nexus_agent_name="SOPManager"),
         model_client=model_client
     )
 
@@ -126,11 +92,11 @@ def build_sop_graphflow(
     builder.add_node(sop_manager_agent, activation="any")
     for sop in sop_agents:
         builder.add_node(sop)
-        builder.add_edge(sop_manager_agent, sop, condition=f"HANDOFF_TO_{sop.name}")
+        builder.add_edge(sop_manager_agent, sop, condition=f"transfer_to_{sop.name}")
         builder.add_edge(sop, sop_manager_agent)
         # all_graph_participants.append(sop)
     builder.add_node(stop_agent_instance)
-    builder.add_edge(sop_manager_agent, stop_agent_instance, condition="ALL_TASKS_DONE")
+    builder.add_edge(sop_manager_agent, stop_agent_instance, condition="all_tasks_done")
     # all_graph_participants.append(stop_agent_instance)
     builder.set_entry_point(sop_manager_agent)
     graph = builder.build()

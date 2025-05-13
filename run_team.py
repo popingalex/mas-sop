@@ -65,7 +65,7 @@ async def main():
                 print(f"Content:\n{event.content}")
             if hasattr(event, 'metadata'):
                 print(f"Metadata: {event.metadata}")
-            print(f"Raw event: {event}")
+            # print(f"Raw event: {event}")
     except Exception as e:
         import traceback
         print("\n[ERROR] Exception during flow.run_stream:")

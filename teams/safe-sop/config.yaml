@@ -10,7 +10,7 @@ workflows:
   version: "2.1"
   description: "Standard Operating Procedure for SAFE Emergency Response, focusing on declarative task objectives."
   steps:
-    - id: "0"
+    - id: "1"
       name: "Init Plan Prep"
       label: "事件启动与规划准备"
       assignee: "Strategist"
@@ -33,7 +33,7 @@ workflows:
           assignee: "Strategist"
           description: "Determine required expert roles, configure the response team, and instantiate the overall Standard Operating Procedure (SOP) plan for this event."
 
-    - id: "1"
+    - id: "2"
       name: "Situation Awareness & Risk Assessment"
       label: "态势理解与风险评估"
       assignee: "Awareness"
@@ -56,7 +56,7 @@ workflows:
           assignee: "Awareness"
           description: "Perform a comprehensive risk assessment. This involves an initial broad assessment, a potential decision point for specialized deep assessment by relevant experts, and integration of all findings into a final risk report."
 
-    - id: "2"
+    - id: "3"
       name: "Objectives & CoA Development"
       label: "目标确定与方案制定"
       assignee: "Strategist"
@@ -74,7 +74,7 @@ workflows:
           assignee: "FieldExpert"
           description: "Develop a recommended Course of Action (CoA). This involves relevant experts generating potential CoA options based on objectives, followed by evaluation and selection of the most suitable CoA framework."
 
-    - id: "3"
+    - id: "4"
       name: "Resource Confirmation & Plan Finalization"
       label: "资源确认与计划定稿"
       assignee: "Strategist"
@@ -92,7 +92,7 @@ workflows:
           assignee: "Strategist"
           description: "Consolidate the selected Course of Action and resource confirmation status into the final, actionable Emergency Response Plan."
 
-    - id: "4"
+    - id: "5"
       name: "Simulation Execution"
       label: "行动方案模拟执行"
       assignee: "Executor"
@@ -105,7 +105,7 @@ workflows:
           assignee: "Executor"
           description: "Translate the finalized plan into simulation commands, configure and run the simulation in the Execution Validation Environment (EVE), and log the results."
 
-    - id: "5"
+    - id: "6"
       name: "Result Review & Summary"
       label: "结果检查与复盘"
       assignee: "Strategist"
