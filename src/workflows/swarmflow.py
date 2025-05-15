@@ -13,6 +13,7 @@ from src.types.plan import PlanContext
 from src.tools.storage import FileStorage
 from typing import cast
 from string import Template
+import json
 
 def make_swarmgroup_init_message(plan_id: str, step_id: str, task_id: str, artifact_id: str = None, event: str = None) -> TextMessage:
     """
@@ -71,11 +72,28 @@ async def run_swarm(model_client, team_config, log_dir, initial_message_content)
     )
     task_result = await starter.run(task=initial_message_content)
     logger.info(f"[{starter.name}] 启动流程: {task_result}")
-    starter_msg: StructuredMessage[PlanContext] = task_result.messages[-1]
-    plan_context = starter_msg.content
+    task_msg: StructuredMessage[PlanContext] = task_result.messages[-1]
     swarm_group = build_sop_swarm_group(model_client, team_config, plan_manager, artifact_manager)
-    async for event in swarm_group.run_stream(task=starter_msg):
+    async for event in swarm_group.run_stream(task=task_msg):
         yield event
     reviewer = Reviewer(model_client=model_client, plan_manager=plan_manager, artifact_manager=artifact_manager)
-    review_result = await reviewer.run(plan_context)
-    yield {"type": "review", "result": review_result}
+    review_result = await reviewer.run(task=task_msg)
+    # logger.info(f"[{reviewer.name}] 输出总结: {review_result}")
+    # 提取结构化总结
+    summary = None
+    if hasattr(review_result, "messages") and review_result.messages:
+        last_msg = review_result.messages[-1]
+        if hasattr(last_msg, "content"):
+            summary = last_msg.content
+            # pydantic对象转dict
+            if hasattr(summary, "model_dump"):
+                summary = summary.model_dump()
+            # 字符串且为json，转为dict
+            if isinstance(summary, str):
+                try:
+                    summary = json.loads(summary)
+                except Exception:
+                    pass
+    # 日志只打印结构化总结
+    logger.info(f"[{reviewer.name}] 结构化总结:\n{json.dumps(summary, ensure_ascii=False, indent=2)}")
+    yield {"type": "review", "summary": summary}

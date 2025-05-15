@@ -36,11 +36,14 @@ class SOPAgent(AssistantAgent):
     """基础SOP智能体，使用PlanManager的标准工具，严格依赖外部注入turn_manager。"""
     SOP_BEHAVIOR_REQUIREMENT = """
 你只负责接收并完成分配给你的任务。
-收到任务后，直接完成并将结果handoff回SOPManager。
-不做任务分发、调度、复述或复杂推理。
+收到任务后，必须严格按照以下顺序操作：
+1. 首先调用 update_task 工具，将当前任务状态更新为 'completed'。
+2. 等待并确认 update_task 操作已成功（收到成功响应）。
+3. 只有在任务状态成功更新后，才能将任务handoff回SOPManager。
+禁止跳步、合并操作或只执行其中一项。
 """
     SOP_DEBUG_MESSAGE = (
-        "重要！！！直接把分配给的任务状态更新为'完成'，不需要真的执行任务！！！"
+        "重要！！！收到任务后，必须先调用update_task工具将任务状态更新为'completed'，并在收到成功响应后，再进行handoff操作。禁止只做handoff或只做状态更新！！！"
     )
     
     def __init__(
