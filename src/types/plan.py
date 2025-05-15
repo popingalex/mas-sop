@@ -3,9 +3,9 @@ from pydantic import BaseModel, validator
 from datetime import datetime
 
 # Status Literals
-PlanStatus = Literal["not_started", "in_progress", "completed", "error"]
-StepStatus = Literal["not_started", "in_progress", "completed", "error"]
-TaskStatus = Literal["not_started", "in_progress", "completed", "error"]
+PlanStatus = Literal["not_started", "in_progress", "completed"]
+StepStatus = Literal["not_started", "in_progress", "completed"]
+TaskStatus = Literal["not_started", "in_progress", "completed"]
 
 class TaskNote(BaseModel):
     author: str
@@ -39,14 +39,14 @@ class Step(BaseModel):
 
 class Plan(BaseModel):
     """计划数据结构 (运行时实例)
-    cursor: 当前计划的下一个待办任务的索引路径（如 [step_idx, task_idx]），None 表示计划未开始或已全部完成。
+    next: 当前计划的下一个待办任务的索引路径（如 [step_id, task_id]），None 表示计划未开始或已全部完成。
     """
     id: str
     name: str  # 原title字段，改为name
     description: str
     steps: List[Step] = []
     status: PlanStatus = "not_started"
-    cursor: Optional[List[str]] = None  # 指向下一个待完成任务的索引路径（如 [step_idx, task_idx]，均为字符串）
+    next: Optional[List[str]] = None  # 指向下一个待完成任务的索引路径（如 [step_id, task_id]，均为字符串）
 
 class PlanTemplate(BaseModel):
     """SOP计划模板数据结构 (配置时使用)"""
@@ -54,3 +54,11 @@ class PlanTemplate(BaseModel):
     version: str # Corresponds to WorkflowDefinition.version
     description: str # Corresponds to WorkflowDefinition.description
     steps: List[Step] = [] # Uses the unified Step model
+
+class PlanContext(BaseModel):
+    """计划运行时上下文数据对象，包含事件、计划ID、资产ID、当前步骤和任务ID等。"""
+    event: str
+    plan_id: str
+    artifact_id: str
+    step_id: str = None  # 可选
+    task_id: str = None  # 可选

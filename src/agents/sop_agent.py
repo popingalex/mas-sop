@@ -6,16 +6,17 @@ import asyncio
 import logging
 
 from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.messages import TextMessage, BaseChatMessage, ChatMessage
+from autogen_agentchat.messages import TextMessage, BaseChatMessage, ChatMessage, HandoffMessage
 from autogen_core.models import ChatCompletionClient, SystemMessage
 from autogen_core import CancellationToken
 
 from ..tools.plan.manager import PlanManager
 from src.types.plan import Plan, Step
-from ..config.parser import AgentConfig
+from ..config.parser import AgentConfig, TeamConfig
 from ..types import JudgeDecision
 from autogen_agentchat.tools import AgentTool
 from autogen_agentchat.base._handoff import Handoff
+from autogen_agentchat.base import Response
 
 # 新增TurnManager类
 class TurnManager:
@@ -34,56 +35,21 @@ class TurnManager:
 class SOPAgent(AssistantAgent):
     """基础SOP智能体，使用PlanManager的标准工具，严格依赖外部注入turn_manager。"""
     SOP_BEHAVIOR_REQUIREMENT = """
-请严格遵循以下要求：
-
-1. 任务执行
-- 必须严格按照给定的计划（plan_id）推进所有任务，不允许随意创建新计划或子计划，除非有明确指令。
-- 每次收到任务时，先简要复述任务内容，包括计划ID、步骤ID、任务ID、任务名称、任务描述。
-- 明确说明你的处理思路和执行过程。
-- 任务完成后，简要总结本次任务的结果。
-- **只有当前任务的Assignee（负责人）才可以修改该任务的状态，非Assignee只能添加Note，不得变更任务状态。**
-- **所有工具调用必须基于真实、精确的ID参数（如plan_id、step_id、task_id），严禁凭空猜测或假设ID。**
-- **如果只提供了计划ID，必须先用get_plan工具查询计划结构和最新任务，再推进后续操作。**
-- **工具调用前，务必先通过get_plan/get_task等工具获取到最新的ID。**
-
-2. 任务流转与handoff
-- 如果计划还未全部完成，必须明确指出下一个要执行的任务，包括计划ID、步骤ID、任务ID、任务名称、任务描述、负责人（assignee）。
-- 用自然语言表达"将任务转交给该负责人"，如：
-  - "接下来由【XXX】负责执行下一个任务。"
-  - "请【XXX】继续完成后续任务。"
-- 如果需要handoff，直接用自然语言说明，并确保LLM能够理解handoff对象。
-
-3. 计划终止
-- 如果所有任务都已完成，请用自然语言说明计划已全部完成，例如：
-  - "所有任务已完成，计划执行结束。"
-- 不要遗漏任何终止信号。
-
-4. 工具调用
-- 你只能使用系统提供的工具（如get_task、update_task）来推进任务，不允许随意调用create_sub_plan等创建新计划的工具，除非有明确指令。
-- 工具调用时要确保参数准确，避免无效调用。
-- **调用update_task时，只有Assignee可以变更任务状态，非Assignee只能添加Note。**
-
-5. 其他约束
-- 回复内容要简洁明了，避免冗余。
-- 不要重复执行已完成的任务。
-- 不要擅自更改任务分配。
-- 如遇到异常或无法推进，请用自然语言说明原因。
-- 遇到任务ID/步骤ID错误时，只能请求更多信息或等待人工干预，不能自作主张分解任务或创建新计划。
-
-严格按照以上要求推进每一步业务。
+你只负责接收并完成分配给你的任务。
+收到任务后，直接完成并将结果handoff回SOPManager。
+不做任务分发、调度、复述或复杂推理。
 """
     SOP_DEBUG_MESSAGE = (
-        "重要！！！现在是调试流程阶段，请直接把分配给你的任务状态更新为'完成'，不需要真的执行任务！！！"
+        "重要！！！直接把分配给的任务状态更新为'完成'，不需要真的执行任务！！！"
     )
     
     def __init__(
         self,
-        name: str,
         model_client: Any,
         plan_manager: PlanManager,
+        team_config: TeamConfig,  # 新增参数
         agent_config: AgentConfig,
         turn_manager: TurnManager,  # 必须传入，提前到可选参数前
-        prompt: Optional[str] = None,
         artifact_manager: Optional[Any] = None,
         handoffs: Optional[List[Handoff | str]] = None,
         tools: Optional[List[Callable]] = [],  # 显式声明tools参数
@@ -91,6 +57,7 @@ class SOPAgent(AssistantAgent):
     ):
         assert turn_manager is not None, "turn_manager 不能为空，必须传入 TurnManager 实例"
         self.handoffs = handoffs  # 保持与父类一致，None即为None
+        self.team_config = team_config  # 保存team_config
         # 只注册LLM需要的推进/查询/更新类方法为工具（排除create_plan）
         plan_tools = [
             plan_manager.get_plan,
@@ -100,7 +67,7 @@ class SOPAgent(AssistantAgent):
         ]
         
         super().__init__(
-            name=name,
+            name=agent_config.name,
             tools=list(set(tools + plan_tools)),
             model_client=model_client,
             system_message=None,
@@ -109,7 +76,24 @@ class SOPAgent(AssistantAgent):
         # 1. 注入自我认知system_message
         self._system_messages.append(SystemMessage(content=f"你是{self.name}"))
         # 2. 注入配置文件自定义prompt（如有）
-        self._system_messages.append(SystemMessage(content=prompt))
+        self._system_messages.append(SystemMessage(content=agent_config.prompt))
+        # 2.5 注入actions（如有）
+        actions = None
+        if agent_config and hasattr(agent_config, 'actions') and agent_config.actions:
+            actions = agent_config.actions
+        elif team_config is not None:
+            # 兼容直接传入team_config的情况
+            agent_entry = None
+            if hasattr(team_config, 'agents'):
+                for ag in team_config.agents:
+                    if getattr(ag, 'name', None) == name:
+                        agent_entry = ag
+                        break
+            if agent_entry and hasattr(agent_entry, 'actions'):
+                actions = agent_entry.actions
+        if actions:
+            actions_str = '\n'.join(f'- {a}' for a in actions)
+            self._system_messages.append(SystemMessage(content=f"--- 角色职责（actions） ---\n{actions_str}"))
         # 3. 注入系统内置行为约束（始终兜底）
         self._system_messages.append(SystemMessage(content=self.SOP_BEHAVIOR_REQUIREMENT))
         # 4. 调试提示（如有）
@@ -129,23 +113,6 @@ class SOPAgent(AssistantAgent):
             else:
                 logger.info(str(msg))
 
-
-    def _extract_task(self, messages: List[BaseChatMessage]) -> str:
-        """从消息列表中提取最后一条用户消息作为任务。"""
-        if not messages:
-            return ""
-        for msg in reversed(messages):
-            if msg.source == "user":
-                return msg.content
-        return ""
-
-    def _has_search_tool(self) -> bool:
-        """检查是否有搜索工具。"""
-        assigned_tools = getattr(self.agent_config, 'assigned_tools', None)
-        if assigned_tools and isinstance(assigned_tools, (list, dict)):
-            return "search" in assigned_tools
-        return False
-
     async def quick_think(self, task_content: str):
         """快速思考，调用 judge_agent 判断任务类型。"""
         if not self.judge_agent:
@@ -160,8 +127,12 @@ class SOPAgent(AssistantAgent):
                 except Exception as e:
                     logger.error(f"{self.name}: JudgeDecision parse error: {e}")
         return None
-
+    
     async def on_messages_stream(self, messages: list[BaseChatMessage], cancellation_token=None, **kwargs):
-        # 只做最小覆盖，直接交由LLM根据提示词和工具链推进业务
-        async for event in super().on_messages_stream(messages, cancellation_token, **kwargs):
-            yield event 
+        async for msg in super().on_messages_stream(messages, cancellation_token, **kwargs):
+            print(f"{self.name} {type(msg)}================")
+            # print(msg)
+            # print(f"============================")
+            # if isinstance(msg, Response):
+            #     pass
+            yield msg

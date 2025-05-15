@@ -1,13 +1,15 @@
 from autogen_agentchat.teams import Swarm
 from src.agents.sop_agent import SOPAgent, TurnManager
+from src.agents.sop_manager import SOPManager
 from autogen_agentchat.conditions import FunctionalTermination
 from src.config.parser import TeamConfig
 from src.tools.plan import PlanManager
 from src.tools.artifact_manager import ArtifactManager
-from src.agents.starter import Starter, StarterResult
+from src.agents.starter import Starter
 from src.agents.reviewer import Reviewer
 from loguru import logger
 from autogen_agentchat.messages import TextMessage, StructuredMessage
+from src.types.plan import PlanContext
 from src.tools.storage import FileStorage
 from typing import cast
 from string import Template
@@ -23,48 +25,38 @@ def make_swarmgroup_init_message(plan_id: str, step_id: str, task_id: str, artif
         content += f"\n事件: {event}"
     return TextMessage(content=content, source="system")
 
-def build_sop_swarm_group(team_config: TeamConfig,
-                          model_client,
-                          plan_id,
+def build_sop_swarm_group(client,
+                          team_config: TeamConfig,
                           plan_manager: PlanManager,
-                          artifact_manager=None):
+                          artifact_manager: ArtifactManager):
     """
-    根据团队配置、模型、计划管理器和计划ID组装SwarmGroup。
-    只包含团队成员SOPAgent，终止条件为计划全部完成。
+    组装SOPManager和所有SOPAgent为SwarmGroup成员。
+    SOPManager为中心调度者，SOPAgent只负责执行。
+    终止条件为计划全部完成。
     """
     turn_manager = TurnManager()
-    participants = []
-    agent_names = [agent_conf.name for agent_conf in team_config.agents]
+    sop_manager = SOPManager(
+        plan_manager=plan_manager,
+        team_config=team_config,
+        artifact_manager=artifact_manager
+    )
+    participants = [sop_manager]
+    # 组装SOPAgent
     for agent_conf in team_config.agents:
-        # prompt变量替换
-        prompt = agent_conf.prompt
-        if prompt:
-            prompt_tpl = Template(prompt)
-            prompt = prompt_tpl.safe_substitute(
-                agent={'name': agent_conf.name},
-                role_config={'expertise_area': getattr(agent_conf, 'expertise_area', '')}
-            )
         agent = SOPAgent(
-            name=agent_conf.name,
-            model_client=model_client,
+            model_client=client,
             plan_manager=plan_manager,
             agent_config=agent_conf,
+            team_config=team_config,
             turn_manager=turn_manager,
             artifact_manager=artifact_manager,
-            prompt=prompt,
-            handoffs=agent_names
+            handoffs=["SOPManager"],
         )
         participants.append(agent)
-
-    async def plan_is_done(messages):
-        plan = plan_manager.get_plan(plan_id)
-        return plan and plan['status'] == 'completed'
-
-    termination_condition = FunctionalTermination(plan_is_done)
-
+    termination_condition = sop_manager.get_termination_condition()
     return Swarm(participants=participants, termination_condition=termination_condition)
 
-async def run_swarm(team_config, model_client, log_dir, initial_message_content):
+async def run_swarm(model_client, team_config, log_dir, initial_message_content):
     # 全局唯一的TurnManager和Storage
     turn_manager = TurnManager()
     storage = FileStorage(base_dir=log_dir, format="yaml", mode="multi")
@@ -79,13 +71,11 @@ async def run_swarm(team_config, model_client, log_dir, initial_message_content)
     )
     task_result = await starter.run(task=initial_message_content)
     logger.info(f"[{starter.name}] 启动流程: {task_result}")
-    starter_result = cast(StarterResult, cast(StructuredMessage, task_result.messages[-1]).content)
-
-
-    plan_id = starter_result.plan_id
-    swarm_group = build_sop_swarm_group(team_config, model_client, plan_id, plan_manager, artifact_manager)
-    async for event in swarm_group.run_stream(task=starter_result.model_dump_json()):
+    starter_msg: StructuredMessage[PlanContext] = task_result.messages[-1]
+    plan_context = starter_msg.content
+    swarm_group = build_sop_swarm_group(model_client, team_config, plan_manager, artifact_manager)
+    async for event in swarm_group.run_stream(task=starter_msg):
         yield event
     reviewer = Reviewer(model_client=model_client, plan_manager=plan_manager, artifact_manager=artifact_manager)
-    review_result = await reviewer.run(plan_id=plan_id)
+    review_result = await reviewer.run(plan_context)
     yield {"type": "review", "result": review_result}

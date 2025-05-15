@@ -66,14 +66,14 @@ class PlanManager:
 
     # --- Plan Operations --- #
 
-    def _update_cursor(self, plan: Plan) -> None:
-        """自动更新计划的cursor字段，指向下一个待办任务的索引路径（如 [step_idx, task_idx]），全部完成时为None。"""
+    def _update_next(self, plan: Plan) -> None:
+        """自动更新计划的next字段，指向下一个待办任务的索引路径（如 [step_id, task_id]），全部完成时为None。"""
         for step in plan.steps:
             for task in step.tasks:
                 if task.status != "completed":
-                    plan.cursor = [step.id, task.id]
+                    plan.next = [step.id, task.id]
                     return
-        plan.cursor = None
+        plan.next = None
 
     def _create_plan(
         self,
@@ -97,10 +97,10 @@ class PlanManager:
                 name=name,
                 description=description,
                 steps=steps if steps is not None else [],
-                cursor=None,
+                next=None,
                 file_name=plan_name
             )
-            self._update_cursor(new_plan)
+            self._update_next(new_plan)
             self._plans[id] = new_plan
             self.storage.save(self.namespace, new_plan, id, plan_name)
             # 如有parent_task，挂载到父任务的sub_plans
@@ -178,9 +178,22 @@ class PlanManager:
             id (str): 计划唯一标识（plan_id）。
         Returns:
             ResponseType: 包含计划详细结构、状态、所有步骤和任务的dict。
+        重要说明：
+            - 返回结构中包含 next 字段，格式为 [step_id, task_id]，均为字符串。
+            - next 指向下一个必须推进的任务（即第一个未完成的任务）。
+            - 只能推进 next 指向的任务，不能跳步或提前推进后续任务。
         用法示例：
             - 查询计划当前状态、所有步骤、任务分配情况。
             - 获取计划的最新任务ID、步骤ID，用于后续工具调用。
+            - 通过 next 字段唯一确定下一个任务。
+        返回示例：
+            {
+                "id": "0",                  # 计划ID
+                "name": "SAFE_SOP_v8.1_Declarative",  # 计划名称
+                "status": "in_progress",   # 计划状态
+                "steps": [...],              # 步骤列表
+                "next": ["3", "2"]      # 下一个必须推进的任务 [step_id, task_id]
+            }
         """
         plan = self._plans.get(id)
         if not plan:
@@ -244,7 +257,7 @@ class PlanManager:
         for i, s in enumerate(plan.steps):
             s.index = i
         self._cascade_status_update(plan)
-        self._update_cursor(plan)
+        self._update_next(plan)
         self._save_plan(plan)
         logger.info(f"步骤 '{new_step.description[:30]}...' 已添加到计划 '{plan.name}'")
         return success("步骤添加成功", data=plan.model_dump(mode='json'))
@@ -253,38 +266,28 @@ class PlanManager:
         """
         递归刷新plan下所有step和task的状态，实现任务→步骤→计划的级联状态同步。
         """
-        # 先更新每个step的状态
+        step_status_set = set()
         for step in plan.steps:
             original_step_status = step.status
             if not step.tasks:
                 step.status = "not_started"
             elif all(task.status == "completed" for task in step.tasks):
                 step.status = "completed"
-            elif any(task.status == "error" for task in step.tasks):
-                step.status = "error"
-            elif any(task.status == "in_progress" for task in step.tasks) or \
-                 (any(task.status == "completed" for task in step.tasks) and original_step_status == "not_started") or \
-                 (all(task.status == "not_started" for task in step.tasks) and original_step_status == "in_progress"):
+            elif any(task.status == "in_progress" for task in step.tasks):
                 step.status = "in_progress"
-            elif all(task.status == "not_started" for task in step.tasks) and original_step_status != "in_progress":
+            elif all(task.status == "not_started" for task in step.tasks):
                 step.status = "not_started"
-            # else: 保持原状态
+            else:
+                step.status = "in_progress"  # 存在completed和not_started混合
             if step.status != original_step_status:
                 logger.info(f"步骤 '{step.id or step.index}' 状态根据任务自动更新为: {step.status}")
-        # 再更新plan的状态
+            step_status_set.add(step.status)
         original_plan_status = plan.status
-        if not plan.steps:
-            if original_plan_status != "completed":
-                plan.status = "not_started"
-        elif all(step.status == "completed" for step in plan.steps):
+        if step_status_set == {"completed"} and plan.steps:
             plan.status = "completed"
-        elif any(step.status == "error" for step in plan.steps):
-            plan.status = "error"
-        elif any(step.status == "in_progress" for step in plan.steps) or \
-             (any(step.status == "completed" for step in plan.steps) and original_plan_status == "not_started") or \
-             (all(step.status == "not_started" for step in plan.steps) and original_plan_status == "in_progress"):
-            plan.status = "in_progress"
-        elif all(step.status == "not_started" for step in plan.steps) and original_plan_status != "in_progress":
+        elif "in_progress" in step_status_set or ("completed" in step_status_set and "not_started" in step_status_set):
+             plan.status = "in_progress"
+        else:
             plan.status = "not_started"
         if plan.status != original_plan_status:
             logger.info(f"计划 '{plan.name}' (ID: {plan.id}) 状态根据步骤自动更新为: {plan.status}")
@@ -332,7 +335,7 @@ class PlanManager:
         new_task.id = new_task.id or normalize_id(f"{target_step.index+1}.{task_index+1}", new_task.name)
         target_step.tasks.append(new_task)
         self._cascade_status_update(plan)
-        self._update_cursor(plan)
+        self._update_next(plan)
         self._save_plan(plan)
         logger.info(f"任务 '{new_task.name}' 已添加到计划 '{plan.name}' 的步骤 '{target_step.id or target_step.index}'")
         return success("任务添加成功", data=target_step.model_dump(mode='json'))
@@ -414,45 +417,9 @@ class PlanManager:
         logger.debug(f"[update_task] notes追加: {note}")
         logger.info(f"[update_task] after: task.status={target_task.status}, updated_fields={updated_fields}")
         self._cascade_status_update(plan)
+        self._update_next(plan)
         self._save_plan(plan)
-        self._update_cursor(plan)
         return success({"id": target_task.id, "name": target_task.name, "status": target_task.status, "notes": target_task.notes})
-
-    # --- Helper & Utility Methods (continued) --- #
-    def get_pending(self, plan_id_str: str) -> ResponseType:
-        logger.info(f"[get_pending] called for plan_id={plan_id_str}")
-        try:
-            plan_id = plan_id_str
-        except ValueError:
-            logger.error(f"[get_pending] 无效的计划ID: {plan_id_str}")
-            return error(f"无效的计划ID: {plan_id_str}")
-        plan = self._plans.get(plan_id)
-        if not plan:
-            logger.error(f"[get_pending] 未找到计划: {plan_id_str}")
-            return error(f"未找到计划: {plan_id_str}")
-        logger.debug(f"[get_pending] plan.status={plan.status}, steps={len(plan.steps)}")
-        for step in plan.steps:
-            logger.debug(f"[get_pending] step.id={step.id}, step.status={step.status}, tasks={len(step.tasks)}")
-            for task in step.tasks:
-                logger.debug(f"[get_pending] task.id={task.id}, task.status={task.status}")
-                if hasattr(task, "subplan_id") and task.subplan_id:
-                    subplan = self._plans.get(task.subplan_id)
-                    if not subplan or not self._is_plan_completed(subplan):
-                        logger.info(f"[get_pending] 存在未完成的子计划任务: step={step.id}, task={task.id}")
-                        return success("存在未完成的子计划任务", data={
-                            "status": "pending",
-                            "step": step.model_dump(mode='json'),
-                            "task": task.model_dump(mode='json')
-                        })
-                elif task.status != "completed":
-                    logger.info(f"[get_pending] 存在未完成任务: step={step.id}, task={task.id}")
-                    return success("存在未完成任务", data={
-                        "status": "pending",
-                        "step": step.model_dump(mode='json'),
-                        "task": task.model_dump(mode='json')
-                    })
-        logger.info(f"[get_pending] 所有任务已完成: plan_id={plan_id_str}")
-        return success("所有任务已完成", data={"status": "completed"})
 
     def _is_plan_completed(self, plan: Plan) -> bool:
         """递归判断计划及其所有子计划是否完成"""

@@ -66,7 +66,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/run_team.py",
-            "args": ["teams/safe-sop/config.yaml"],
+            "args": ["teams/safe-sop/config.yaml", "--flow", "swarm"],
             "python": "${command:python.interpreterPath}",
             "cwd": "${workspaceFolder}",
             "env": {

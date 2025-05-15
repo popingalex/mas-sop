@@ -92,7 +92,7 @@ workflows:
       label: "行动方案模拟执行"
       assignee: "Executor"
       description: |
-        （可选）在仿真环境中执行定稿的应急响应计划，验证其有效性并发现潜在问题。
+        在仿真环境中执行定稿的应急响应计划，验证其有效性并发现潜在问题。
       tasks:
         - id: "1"
           name: "Drive Simulation based on Response Plan"
@@ -105,7 +105,7 @@ workflows:
       label: "结果检查与复盘"
       assignee: "Strategist"
       description: |
-        （可选）评估仿真执行结果，开展流程复盘，总结经验教训以便未来改进。
+        评估仿真执行结果，开展流程复盘，总结经验教训以便未来改进。
       tasks:
         - id: "1"
           name: "Check Simulation Execution Results"
@@ -122,20 +122,6 @@ global_settings:
   default_llm_config:
     model: "ds" # 可以根据需要调整默认模型
     temperature: 0.2
-  shared_tools:
-    # 假设 PlanManager 和 ArtifactManager 是所有角色都需要的基础工具
-    # 注意：实际工具名称/类名需要与框架实现匹配
-    # PlanManager 的工具由 PlanAgentTool 提供
-    # ArtifactManager 的工具直接注册
-    # - PlanManager # 由 PlanAgentTool 提供
-    # - ArtifactManager # 分解为独立工具
-    # - resource_checker # 示例共享工具
-    # - information_retriever # 示例共享工具
-    # - information_processor # 示例共享工具
-    # - specialized_analyzer # 示例共享工具
-    # - knowledge_base_retriever # 示例共享工具
-    # - eve_driver # 示例共享工具
-    # - plan_translator # 示例共享工具
 
 agents:
   # --- Strategist ---
@@ -145,7 +131,6 @@ agents:
       - 做出战略决策（如是否需要专家、CoA选择等）。
       - 整合其他角色的信息和结果。
       - 确保整体计划的连贯性和完成。
-      - 通过PlanManager管理工作流执行（隐式）。
     prompt: |
       你的职责是协调团队执行分配的应急响应工作流。
       利用你的规划、推理、整合和决策能力完成分配任务，引导团队实现整体目标。

@@ -1,6 +1,6 @@
 from typing import Optional, List, Any, AsyncGenerator, Dict, Sequence
 from loguru import logger
-import json
+
 from pydantic import BaseModel
 
 from autogen_agentchat.agents import AssistantAgent
@@ -12,17 +12,8 @@ from ..llm.utils import maybe_structured
 from autogen_agentchat.base import Response, TaskResult
 from ..tools.artifact_manager import ArtifactManager
 from autogen_core import CancellationToken
-from src.types.plan import Plan
-
-class MatchResult(BaseModel):
-    task: str
-    name: str
-    reason: str
-
-class StarterResult(BaseModel):
-    event: str
-    plan_id: str
-    artifact_id: str
+from src.types.plan import Plan, PlanContext
+import json
 
 PROMPT_MATCH = """
 请根据用户输入的任务，在SOP模板清单中查找最合适的匹配项。
@@ -35,6 +26,11 @@ PROMPT_MATCH = """
 可选模板清单如下：
 {templates}
 """
+
+class MatchResult(BaseModel):
+    task: str
+    name: str
+    reason: str
 
 class Starter(AssistantAgent):
     """Starter: 只负责任务与SOP模板匹配，并自动创建计划。"""
@@ -67,13 +63,13 @@ class Starter(AssistantAgent):
             user_message = task_result.messages[-1]
             parsed_user_message = MatchResult.model_validate_json(user_message.to_text())
             starter_result = self.artifact_and_plan(parsed_user_message)
-            structured_msg = StructuredMessage[StarterResult](content=starter_result, source=self.name)
+            structured_msg = StructuredMessage[PlanContext](content=starter_result, source=self.name)
             return TaskResult(messages=[structured_msg])
         except Exception as e:
             logger.warning(f"[Starter] 匹配结果解析失败或计划创建失败: {e}")
             return task_result
 
-    def artifact_and_plan(self, match_result: MatchResult) -> StarterResult:
+    def artifact_and_plan(self, match_result: MatchResult) -> PlanContext:
         plan_tpl = next((tpl for tpl in self.team_config.workflows if tpl.name == match_result.name), None)
         if not plan_tpl:
             logger.warning(f"[Starter] 未找到计划模板: {match_result.name}")
@@ -106,10 +102,12 @@ class Starter(AssistantAgent):
         if result.get("success"):
             logger.info(f"[Starter] 已保存初始资产，artifact_id={artifact_id}")
         else:
-            logger.warning(f"[Starter] 资产保存失败: {result.get('error')}")
+            logger.warning(f"[Starter] 资产保存失败: {result.get('error')}") 
         # 返回所有关键ID
-        return StarterResult(
+        return PlanContext(
             plan_id=plan_obj.id,
             artifact_id=artifact_id,
-            event=match_result.task
+            event=match_result.task,
+            step_id=step_id,
+            task_id=task_id
         )
