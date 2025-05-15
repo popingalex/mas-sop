@@ -1,12 +1,19 @@
 from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
-from uuid import UUID, uuid4
 from pydantic import BaseModel, Field, ValidationError, field_validator
-from src.tools.storage import Storage, DumbStorage, normalize_id
+from src.tools.storage import Storage, DumbStorage
 
 # --- 统一的 Artifact 数据结构 ---
+def generate_artifact_id(name: str = "") -> str:
+    ts = datetime.now().strftime('%Y%m%d')
+    if name:
+        import re
+        name = re.sub(r'[^A-Za-z0-9_.-]', '', name)
+        return f"{ts}_{name}"
+    return ts
+
 class Artifact(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid4()))
+    id: str = Field(default_factory=generate_artifact_id)
     title: str
     content: Any
     tags: List[str] = []
@@ -29,8 +36,10 @@ class ArtifactManager:
 
     def create_artifact(self, title: str, content: Any, author: str, tags: Optional[List[str]] = None, description: Optional[str] = None, artifact_index: str = '', artifact_name: Optional[str] = None) -> Dict[str, Any]:
         try:
-            artifact = Artifact(id=artifact_index, title=title, content=content, author=author, tags=tags or [], description=description)
-            self.storage.save(self.namespace, artifact, artifact_index, artifact_name)
+            # 只用generate_artifact_id生成id
+            real_id = artifact_index or generate_artifact_id(artifact_name or title)
+            artifact = Artifact(id=real_id, title=title, content=content, author=author, tags=tags or [], description=description)
+            self.storage.save(self.namespace, artifact, artifact.id, artifact_name)
             return {"success": True, "data": artifact.model_dump(mode='json')}
         except (ValidationError, ValueError) as ve:
             return {"success": False, "error": str(ve)}

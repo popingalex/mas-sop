@@ -1,5 +1,4 @@
 from typing import Dict, List, Optional, Annotated, Literal, Union, get_args, Any, Callable
-from uuid import uuid4, UUID
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from datetime import datetime
 from loguru import logger
@@ -7,6 +6,7 @@ from ..types import ResponseType, success, error
 from ..errors import ErrorMessages
 from src.types.plan import Plan, Step, Task, PlanStatus, StepStatus, TaskStatus, TaskNote
 from src.tools.storage import Storage, DumbStorage, normalize_id
+import traceback
 
 # --- PlanManager Class --- #
 
@@ -57,7 +57,9 @@ class PlanManager:
 
     def _save_plan(self, plan: Plan) -> None:
         try:
-            self.storage.save(self.namespace, plan, plan.id)
+            # 优先用plan.file_name（如无则用plan.name，否则None）
+            file_name = getattr(plan, 'file_name', None) or getattr(plan, 'name', None)
+            self.storage.save(self.namespace, plan, plan.id, file_name)
         except Exception as e:
             logger.error(f"保存计划数据失败: {e}")
             raise RuntimeError(f"计划持久化失败: {e}")
@@ -86,14 +88,17 @@ class PlanManager:
         内部通用计划创建方法，可选parent_task用于子计划挂载。
         """
         try:
+            logger.info(f"尝试创建计划: id={id}, plan_name={plan_name}, 调用堆栈: {''.join(traceback.format_stack(limit=5))}")
             if id in self._plans:
+                logger.warning(f"重复创建计划被拦截: id={id}, plan_name={plan_name}, 调用堆栈: {''.join(traceback.format_stack(limit=5))}")
                 return error(ErrorMessages.PLAN_EXISTS.format(plan_id=id))
             new_plan = Plan(
                 id=id,
                 name=name,
                 description=description,
                 steps=steps if steps is not None else [],
-                cursor=None
+                cursor=None,
+                file_name=plan_name
             )
             self._update_cursor(new_plan)
             self._plans[id] = new_plan
@@ -166,6 +171,17 @@ class PlanManager:
         return self._create_plan(name, description, steps, id, plan_name, parent_task=parent_task)
 
     def get_plan(self, id: str) -> ResponseType:
+        """
+        获取指定计划的详细信息，包括计划结构、状态和所有步骤、任务。
+
+        Args:
+            id (str): 计划唯一标识（plan_id）。
+        Returns:
+            ResponseType: 包含计划详细结构、状态、所有步骤和任务的dict。
+        用法示例：
+            - 查询计划当前状态、所有步骤、任务分配情况。
+            - 获取计划的最新任务ID、步骤ID，用于后续工具调用。
+        """
         plan = self._plans.get(id)
         if not plan:
             return error(ErrorMessages.NOT_FOUND.format(resource="计划", id_str=id))
@@ -227,42 +243,51 @@ class PlanManager:
             plan.steps.append(new_step)
         for i, s in enumerate(plan.steps):
             s.index = i
-        self._recalculate_plan_status(plan_id_str)
+        self._cascade_status_update(plan)
         self._update_cursor(plan)
         self._save_plan(plan)
         logger.info(f"步骤 '{new_step.description[:30]}...' 已添加到计划 '{plan.name}'")
         return success("步骤添加成功", data=plan.model_dump(mode='json'))
 
-    def _recalculate_plan_status(self, plan_id: str) -> None:
-        """根据步骤状态重新计算并可能更新计划状态。"""
-        plan = self._plans.get(plan_id)
-        if not plan:
-            return
-
-        original_status = plan.status
-        if not plan.steps: # No steps
-            # If a plan has no steps, should its status be 'completed' or remain 'not_started'?
-            # For now, let's say if it had steps and all were completed, it becomes completed.
-            # If it never had steps, its status might be manually set or remain not_started.
-            # This behavior might need refinement. If it's not_started and has no steps, it remains not_started.
-            if original_status != "completed": # Avoid changing if it was explicitly completed
-                 plan.status = "not_started"
+    def _cascade_status_update(self, plan: Plan) -> None:
+        """
+        递归刷新plan下所有step和task的状态，实现任务→步骤→计划的级联状态同步。
+        """
+        # 先更新每个step的状态
+        for step in plan.steps:
+            original_step_status = step.status
+            if not step.tasks:
+                step.status = "not_started"
+            elif all(task.status == "completed" for task in step.tasks):
+                step.status = "completed"
+            elif any(task.status == "error" for task in step.tasks):
+                step.status = "error"
+            elif any(task.status == "in_progress" for task in step.tasks) or \
+                 (any(task.status == "completed" for task in step.tasks) and original_step_status == "not_started") or \
+                 (all(task.status == "not_started" for task in step.tasks) and original_step_status == "in_progress"):
+                step.status = "in_progress"
+            elif all(task.status == "not_started" for task in step.tasks) and original_step_status != "in_progress":
+                step.status = "not_started"
+            # else: 保持原状态
+            if step.status != original_step_status:
+                logger.info(f"步骤 '{step.id or step.index}' 状态根据任务自动更新为: {step.status}")
+        # 再更新plan的状态
+        original_plan_status = plan.status
+        if not plan.steps:
+            if original_plan_status != "completed":
+                plan.status = "not_started"
         elif all(step.status == "completed" for step in plan.steps):
             plan.status = "completed"
         elif any(step.status == "error" for step in plan.steps):
             plan.status = "error"
         elif any(step.status == "in_progress" for step in plan.steps) or \
-             (any(step.status == "completed" for step in plan.steps) and original_status == "not_started") or \
-             (all(step.status == "not_started" for step in plan.steps) and original_status == "in_progress"): 
-             plan.status = "in_progress"
-        elif all(step.status == "not_started" for step in plan.steps) and original_status != "in_progress":
-            plan.status = "not_started" # All steps are new or reset
-        # else: plan status remains unchanged if no clear transition
-
-        if plan.status != original_status:
-            logger.info(f"计划 '{plan.name}' (ID: {plan_id}) 状态根据步骤自动更新为: {plan.status}")
-            # _save_to_file() will be called by the public method that triggered this recalculation
-            # self._save_to_file() # Avoid double saving if called from a method that already saves
+             (any(step.status == "completed" for step in plan.steps) and original_plan_status == "not_started") or \
+             (all(step.status == "not_started" for step in plan.steps) and original_plan_status == "in_progress"):
+            plan.status = "in_progress"
+        elif all(step.status == "not_started" for step in plan.steps) and original_plan_status != "in_progress":
+            plan.status = "not_started"
+        if plan.status != original_plan_status:
+            logger.info(f"计划 '{plan.name}' (ID: {plan.id}) 状态根据步骤自动更新为: {plan.status}")
 
     # --- Task Operations --- #
 
@@ -306,6 +331,7 @@ class PlanManager:
         task_index = len(target_step.tasks)
         new_task.id = new_task.id or normalize_id(f"{target_step.index+1}.{task_index+1}", new_task.name)
         target_step.tasks.append(new_task)
+        self._cascade_status_update(plan)
         self._update_cursor(plan)
         self._save_plan(plan)
         logger.info(f"任务 '{new_task.name}' 已添加到计划 '{plan.name}' 的步骤 '{target_step.id or target_step.index}'")
@@ -365,48 +391,32 @@ class PlanManager:
                 # 只添加id，name需由调用方补充或后续完善
                 target_task.sub_plans.append({"id": v, "name": None})
                 updated_fields.append(k)
+            elif k == "notes":
+                from src.types.plan import TaskNote
+                # 如果传入的是字符串，自动转为TaskNote
+                if isinstance(v, str):
+                    v = [TaskNote(author=author, content=v, turn=tm.turn)]
+                elif isinstance(v, dict):
+                    v = [TaskNote(**v)]
+                elif isinstance(v, list):
+                    v = [TaskNote(**item) if isinstance(item, dict) else item for item in v]
+                setattr(target_task, k, v)
+                updated_fields.append(k)
             elif hasattr(target_task, k):
                 setattr(target_task, k, v)
                 updated_fields.append(k)
         # notes内容
-        note = {
-            "author": author,
-            "content": "任务状态/内容变更",
-            "turn": tm.turn
-        }
+        from src.types.plan import TaskNote
+        note = TaskNote(author=author, content="任务状态/内容变更", turn=tm.turn)
         if not hasattr(target_task, "notes") or target_task.notes is None:
             target_task.notes = []
         target_task.notes.append(note)
         logger.debug(f"[update_task] notes追加: {note}")
         logger.info(f"[update_task] after: task.status={target_task.status}, updated_fields={updated_fields}")
+        self._cascade_status_update(plan)
         self._save_plan(plan)
         self._update_cursor(plan)
         return success({"id": target_task.id, "name": target_task.name, "status": target_task.status, "notes": target_task.notes})
-
-    def _recalculate_step_status(self, step: Step) -> None:
-        """根据其任务状态重新计算并可能更新步骤状态。"""
-        original_status = step.status
-        if not step.tasks:
-            # If a step has no tasks, should it be considered completed?
-            # Or does it rely on its own description/assignee to be acted upon?
-            # Let's assume a step without tasks requires manual status update or remains not_started.
-            if original_status != "completed":
-                step.status = "not_started"
-        elif all(task.status == "completed" for task in step.tasks):
-            step.status = "completed"
-        elif any(task.status == "error" for task in step.tasks):
-            step.status = "error"
-        elif any(task.status == "in_progress" for task in step.tasks) or \
-             (any(task.status == "completed" for task in step.tasks) and original_status == "not_started") or \
-             (all(task.status == "not_started" for task in step.tasks) and original_status == "in_progress"): 
-             step.status = "in_progress"
-        elif all(task.status == "not_started" for task in step.tasks) and original_status != "in_progress":
-             step.status = "not_started"
-        # else: step status remains unchanged
-        
-        if step.status != original_status:
-             logger.info(f"步骤 '{step.id or step.index}' 状态根据任务自动更新为: {step.status}")
-             # Saving is handled by the caller (update_task)
 
     # --- Helper & Utility Methods (continued) --- #
     def get_pending(self, plan_id_str: str) -> ResponseType:
@@ -489,9 +499,9 @@ class PlanManager:
     def tool_list(self) -> list:
         """只返回新API工具方法对象集合。"""
         return [
+            self.get_plan,
             self.create_plan,
             self.create_sub_plan,
-            self.list_plans,
             self.get_task,
             self.update_task,
         ]

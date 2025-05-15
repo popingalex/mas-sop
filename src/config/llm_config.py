@@ -1,7 +1,7 @@
 """LLM configuration and client creation utilities."""
 
 from typing import Dict, Any
-from autogen_core.models import ModelInfo
+from autogen_core.models import ModelInfo, ModelFamily
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from loguru import logger
 from openai.types.shared_params import ResponseFormatJSONObject
@@ -15,12 +15,13 @@ def get_model_info(provider: str) -> ModelInfo:
     Returns:
         ModelInfo: 模型能力配置
     """
+    
     MODEL_CAPABILITIES = {
         "ds": ModelInfo(
             vision=False,
             function_calling=True,
             json_output=True,
-            family="deepseek",
+            family=ModelFamily.UNKNOWN,
             structured_output=True,
         ),
         # 其他供应商的配置...

@@ -15,22 +15,22 @@ def test_plan_tools(plan_manager):
     step1 = Step(id="s1", name="Step1", description="step1 desc", assignee="A", tasks=[
         Task(id="t1", name="Task1", description="desc1", assignee="A")
     ])
-    create_main = plan_manager.create_plan(title="主计划", description="主计划描述", steps=[step1], plan_index="P1")
+    create_main = plan_manager.create_plan(title="主计划", description="主计划描述", steps=[step1])
     assert create_main["status"] == "success"
     plan_id = create_main["data"]["id"]
 
     # 测试create_plan - 无步骤场景
-    create_empty = plan_manager.create_plan(title="空计划", description="无步骤的计划", steps=None, plan_index="P0")
+    create_empty = plan_manager.create_plan(title="空计划", description="无步骤的计划", steps=None)
     assert create_empty["status"] == "success"
     assert len(create_empty["data"]["steps"]) == 0
 
     # 测试create_sub_plan - 基本场景
     parent_task = {"plan_id": plan_id, "step_id": "s1", "task_id": "t1"}
-    create_sub = plan_manager.create_sub_plan(title="子计划", description="子计划描述", steps=[], plan_index="P1.1", parent_task=parent_task)
+    create_sub = plan_manager.create_sub_plan(title="子计划", description="子计划描述", steps=[], parent_task=parent_task)
     assert create_sub["status"] == "success"
 
     # 测试create_sub_plan - 缺少parent_task
-    create_sub_no_parent = plan_manager.create_sub_plan(title="子计划2", description="子计划描述", steps=[], plan_index="P1.2")
+    create_sub_no_parent = plan_manager.create_sub_plan(title="子计划2", description="子计划描述", steps=[])
     assert create_sub_no_parent["status"] == "error"
 
     # 测试list_plans - 基本场景
@@ -98,7 +98,7 @@ def test_list_plans_pending(plan_manager):
     step1 = Step(id="s1", name="Step1", description="desc", assignee="A", tasks=[
         Task(id="t1", name="Task1", description="d", assignee="A")
     ])
-    create_main = plan_manager.create_plan(title="主计划", description="主计划描述", steps=[step1], plan_index="P2")
+    create_main = plan_manager.create_plan(title="主计划", description="主计划描述", steps=[step1])
     plan = plan_manager._plans["P2"]
     plan.pending = [0, 0]
     plans_result = plan_manager.list_plans()
@@ -117,9 +117,9 @@ def test_plan_tools_error_cases(plan_manager):
     # 测试create_plan - 重复ID
     plan_id = "P3"
     step1 = Step(id="s1", name="Step1", description="step1 desc", assignee="A", tasks=[])
-    first_result = plan_manager.create_plan(title="Plan Error 1", description="Desc 1", steps=[step1], plan_index=plan_id)
+    first_result = plan_manager.create_plan(title="Plan Error 1", description="Desc 1", steps=[step1])
     assert first_result["status"] == "success"
-    duplicate_result = plan_manager.create_plan(title="Plan Error 2", description="Desc 2", plan_index=plan_id)
+    duplicate_result = plan_manager.create_plan(title="Plan Error 2", description="Desc 2")
     assert duplicate_result["status"] == "error"
     assert ErrorMessages.PLAN_EXISTS.format(plan_id=plan_id) == duplicate_result["message"]
 
@@ -158,7 +158,7 @@ def test_plan_operations_error_cases(plan_manager):
     assert ErrorMessages.NOT_FOUND.format(resource="计划", id_str="nonexistent") == add_step_nonexistent["message"]
 
     # 测试add_step - 索引越界
-    plan = plan_manager.create_plan(title="Test Plan", description="desc", plan_index="test_plan")
+    plan = plan_manager.create_plan(title="Test Plan", description="desc")
     assert plan["status"] == "success"
     add_step_invalid_index = plan_manager.add_step(plan_id_str="test_plan", step_data=step, insert_after_index=999)
     assert add_step_invalid_index["status"] == "error"
@@ -168,7 +168,7 @@ def test_task_operations_error_cases(plan_manager):
     """测试任务操作的错误情况"""
     # 创建测试计划和步骤
     step = Step(id="s1", name="Step1", description="desc", assignee="A", tasks=[])
-    plan = plan_manager.create_plan(title="Test Plan", description="desc", steps=[step], plan_index="test_plan")
+    plan = plan_manager.create_plan(title="Test Plan", description="desc")
     assert plan["status"] == "success"
 
     # 测试add_task_to_step - 计划不存在
@@ -202,21 +202,19 @@ def test_plan_status_calculation(plan_manager):
     step2 = Step(id="s2", name="Step2", description="desc", assignee="B", tasks=[
         Task(id="t3", name="Task3", description="desc", assignee="B", status="not_started")
     ])
-    plan = plan_manager.create_plan(title="Status Test", description="desc", steps=[step1, step2], plan_index="status_test")
+    plan = plan_manager.create_plan(title="Status Test", description="desc", steps=[step1, step2])
     assert plan["status"] == "success"
 
     # 测试部分任务完成
     plan_manager.update_task("status_test", "s1", "t1", {"status": "completed"}, "A")
     # 手动更新步骤状态，因为 update_task 不会自动更新
     step1.status = "in_progress"
-    plan_manager._recalculate_plan_status("status_test")
     get_plan = plan_manager.get_plan("status_test")
     assert get_plan["data"]["status"] == "in_progress"
 
     # 测试任务出错
     plan_manager.update_task("status_test", "s1", "t2", {"status": "error"}, "A")
     step1.status = "error"
-    plan_manager._recalculate_plan_status("status_test")
     get_plan = plan_manager.get_plan("status_test")
     assert get_plan["data"]["status"] == "error"
 
@@ -225,7 +223,6 @@ def test_plan_status_calculation(plan_manager):
     plan_manager.update_task("status_test", "s2", "t3", {"status": "completed"}, "B")
     step1.status = "completed"
     step2.status = "completed"
-    plan_manager._recalculate_plan_status("status_test")
     get_plan = plan_manager.get_plan("status_test")
     assert get_plan["data"]["status"] == "completed"
 
@@ -235,7 +232,7 @@ def test_get_pending(plan_manager):
     step = Step(id="s1", name="Step1", description="desc", assignee="A", tasks=[
         Task(id="t1", name="Task1", description="desc", assignee="A", status="not_started")
     ])
-    plan = plan_manager.create_plan(title="Pending Test", description="desc", steps=[step], plan_index="pending_test")
+    plan = plan_manager.create_plan(title="Pending Test", description="desc", steps=[step])
     assert plan["status"] == "success"
 
     # 测试有待处理任务
@@ -258,7 +255,6 @@ def test_get_pending(plan_manager):
         title="Sub Plan",
         description="desc",
         steps=[sub_step],
-        plan_index="pending_test.1",
         parent_task={"plan_id": "pending_test", "step_id": "s1", "task_id": "t1"}
     )
     assert sub_plan["status"] == "success"
@@ -275,14 +271,14 @@ def test_get_pending_with_subplans(plan_manager):
     step = Step(id="s1", name="Step1", description="desc", assignee="A", tasks=[
         Task(id="t1", name="Task1", description="desc", assignee="A", status="not_started", subplan_id="sub1")
     ])
-    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step], plan_index="main")
+    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step])
     assert plan["status"] == "success"
 
     # 创建子计划
     sub_step = Step(id="sub_s1", name="SubStep1", description="desc", assignee="B", tasks=[
         Task(id="sub_t1", name="SubTask1", description="desc", assignee="B", status="not_started")
     ])
-    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step], plan_index="sub1")
+    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step])
     assert sub_plan["status"] == "success"
 
     # 测试有未完成的子计划任务
@@ -294,12 +290,10 @@ def test_get_pending_with_subplans(plan_manager):
     # 完成子计划任务
     plan_manager.update_task("sub1", "sub_s1", "sub_t1", {"status": "completed"}, "B")
     sub_step.status = "completed"
-    plan_manager._recalculate_plan_status("sub1")
 
     # 完成主计划任务
     plan_manager.update_task("main", "s1", "t1", {"status": "completed"}, "A")
     step.status = "completed"
-    plan_manager._recalculate_plan_status("main")
 
     # 测试所有任务完成
     pending = plan_manager.get_pending("main")
@@ -312,7 +306,7 @@ def test_update_task_error_cases(plan_manager):
     step = Step(id="s1", name="Step1", description="desc", assignee="A", tasks=[
         Task(id="t1", name="Task1", description="desc", assignee="A", status="not_started")
     ])
-    plan = plan_manager.create_plan(title="Test Plan", description="desc", steps=[step], plan_index="test")
+    plan = plan_manager.create_plan(title="Test Plan", description="desc")
     assert plan["status"] == "success"
 
     # 测试无效的计划ID
@@ -392,14 +386,14 @@ def test_plan_completion_cases(plan_manager):
     step2 = Step(id="s2", name="Step2", description="desc", assignee="B", tasks=[
         Task(id="t3", name="Task3", description="desc", assignee="B", status="not_started")
     ])
-    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step1, step2], plan_index="main")
+    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step1, step2])
     assert plan["status"] == "success"
 
     # 创建子计划
     sub_step = Step(id="sub_s1", name="SubStep1", description="desc", assignee="B", tasks=[
         Task(id="sub_t1", name="SubTask1", description="desc", assignee="B", status="not_started")
     ])
-    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step], plan_index="sub1")
+    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step])
     assert sub_plan["status"] == "success"
 
     # 测试子计划未完成时主计划不能完成
@@ -407,17 +401,14 @@ def test_plan_completion_cases(plan_manager):
     plan_manager.update_task("main", "s2", "t3", {"status": "completed"}, "B")
     step1.status = "in_progress"  # 因为t1还有未完成的子计划
     step2.status = "completed"
-    plan_manager._recalculate_plan_status("main")
     get_plan = plan_manager.get_plan("main")
     assert get_plan["data"]["status"] == "in_progress"
 
     # 测试子计划完成后主计划可以完成
     plan_manager.update_task("sub1", "sub_s1", "sub_t1", {"status": "completed"}, "B")
     sub_step.status = "completed"
-    plan_manager._recalculate_plan_status("sub1")
     plan_manager.update_task("main", "s1", "t1", {"status": "completed"}, "A")
     step1.status = "completed"
-    plan_manager._recalculate_plan_status("main")
     get_plan = plan_manager.get_plan("main")
     assert get_plan["data"]["status"] == "completed"
 
@@ -428,20 +419,19 @@ def test_get_pending_edge_cases(plan_manager):
         Task(id="t1", name="Task1", description="desc", assignee="A", status="not_started", subplan_id="sub1"),
         Task(id="t2", name="Task2", description="desc", assignee="A", status="not_started")
     ])
-    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step1], plan_index="main")
+    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step1])
     assert plan["status"] == "success"
 
     # 创建子计划
     sub_step = Step(id="sub_s1", name="SubStep1", description="desc", assignee="B", tasks=[
         Task(id="sub_t1", name="SubTask1", description="desc", assignee="B", status="not_started")
     ])
-    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step], plan_index="sub1")
+    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step])
     assert sub_plan["status"] == "success"
 
     # 测试子计划任务完成但主计划任务未完成
     plan_manager.update_task("sub1", "sub_s1", "sub_t1", {"status": "completed"}, "B")
     sub_step.status = "completed"
-    plan_manager._recalculate_plan_status("sub1")
     pending = plan_manager.get_pending("main")
     assert pending["status"] == "success"
     assert pending["data"]["status"] == "pending"
@@ -481,14 +471,14 @@ def test_get_pending_with_subplan_id(plan_manager):
     step = Step(id="s1", name="Step1", description="desc", assignee="A", tasks=[
         Task(id="t1", name="Task1", description="desc", assignee="A", status="not_started", subplan_id="sub1")
     ])
-    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step], plan_index="main")
+    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step])
     assert plan["status"] == "success"
 
     # 创建子计划
     sub_step = Step(id="sub_s1", name="SubStep1", description="desc", assignee="B", tasks=[
         Task(id="sub_t1", name="SubTask1", description="desc", assignee="B", status="not_started")
     ])
-    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step], plan_index="sub1")
+    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step])
     assert sub_plan["status"] == "success"
 
     # 测试有未完成的子计划任务
@@ -515,7 +505,7 @@ def test_step_without_tasks(plan_manager):
     """测试没有任务的步骤状态计算"""
     # 创建没有任务的步骤
     step = Step(id="s1", name="Step1", description="desc", assignee="A", tasks=[])
-    plan = plan_manager.create_plan(title="Test Plan", description="desc", steps=[step], plan_index="test")
+    plan = plan_manager.create_plan(title="Test Plan", description="desc")
     assert plan["status"] == "success"
 
     # 测试步骤状态
@@ -534,7 +524,7 @@ def test_step_status_transitions(plan_manager):
         Task(id="t1", name="Task1", description="desc", assignee="A", status="not_started"),
         Task(id="t2", name="Task2", description="desc", assignee="A", status="not_started")
     ])
-    plan = plan_manager.create_plan(title="Test Plan", description="desc", steps=[step], plan_index="test")
+    plan = plan_manager.create_plan(title="Test Plan", description="desc")
     assert plan["status"] == "success"
 
     # 测试所有任务未开始
@@ -622,14 +612,14 @@ def test_plan_completion_with_subplans(plan_manager):
         Task(id="t1", name="Task1", description="desc", assignee="A", status="not_started", subplan_id="sub1"),
         Task(id="t2", name="Task2", description="desc", assignee="A", status="not_started")
     ])
-    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step1], plan_index="main")
+    plan = plan_manager.create_plan(title="Main Plan", description="desc", steps=[step1])
     assert plan["status"] == "success"
 
     # 创建子计划
     sub_step = Step(id="sub_s1", name="SubStep1", description="desc", assignee="B", tasks=[
         Task(id="sub_t1", name="SubTask1", description="desc", assignee="B", status="not_started")
     ])
-    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step], plan_index="sub1")
+    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step])
     assert sub_plan["status"] == "success"
 
     # 测试子计划不存在时主计划不能完成
@@ -637,7 +627,7 @@ def test_plan_completion_with_subplans(plan_manager):
     assert not plan_manager._is_plan_completed(plan_manager._plans["main"])
 
     # 重新创建子计划
-    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step], plan_index="sub1")
+    sub_plan = plan_manager.create_plan(title="Sub Plan", description="desc", steps=[sub_step])
     assert sub_plan["status"] == "success"
 
     # 测试子计划未完成时主计划不能完成
@@ -646,13 +636,13 @@ def test_plan_completion_with_subplans(plan_manager):
     # 完成子计划任务
     plan_manager.update_task("sub1", "sub_s1", "sub_t1", {"status": "completed"}, "B")
     sub_step.status = "completed"
-    plan_manager._recalculate_plan_status("sub1")
 
     # 完成主计划任务
     plan_manager.update_task("main", "s1", "t1", {"status": "completed"}, "A")
     plan_manager.update_task("main", "s1", "t2", {"status": "completed"}, "A")
     step1.status = "completed"
-    plan_manager._recalculate_plan_status("main")
+    get_plan = plan_manager.get_plan("main")
+    assert get_plan["data"]["status"] == "completed"
 
     # 测试所有任务完成
     assert plan_manager._is_plan_completed(plan_manager._plans["main"]) 

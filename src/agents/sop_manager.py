@@ -79,11 +79,11 @@ class SOPManager(SOPAgent):
         plan_tpl = next((tpl for tpl in self.team_config.workflows if tpl.name == name), None)
         if plan_tpl:
             self.plan_manager.create_plan(
+                id='0',
                 name=plan_tpl.name,
                 description=plan_tpl.description,
                 steps=plan_tpl.steps,
-                plan_name=plan_tpl.name,
-                plan_index='0'
+                plan_name=plan_tpl.name
             )
             return '0'
 
