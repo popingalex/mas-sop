@@ -4,7 +4,7 @@ from datetime import datetime
 from loguru import logger
 from ..types import ResponseType, success, error
 from ..errors import ErrorMessages
-from src.types.plan import Plan, Step, Task, PlanStatus, StepStatus, TaskStatus, TaskNote
+from src.types.plan import Plan, Step, Task, PlanStatus, StepStatus, TaskStatus, TaskNote, SubPlanRef
 from src.tools.storage import Storage, DumbStorage, normalize_id
 import traceback
 
@@ -92,30 +92,55 @@ class PlanManager:
             if id in self._plans:
                 logger.warning(f"重复创建计划被拦截: id={id}, plan_name={plan_name}, 调用堆栈: {''.join(traceback.format_stack(limit=5))}")
                 return error(ErrorMessages.PLAN_EXISTS.format(plan_id=id))
+
+            # 处理 parent_task 结构
+            parent_task_dict = None
+            if parent_task:
+                plan_id = parent_task.get('plan_id') or parent_task.get('id')
+                step_id = parent_task.get('step_id')
+                task_id = parent_task.get('task_id')
+                if not (plan_id and step_id and task_id):
+                    logger.error(f"parent_task 缺少必要字段: {parent_task}")
+                    return error("parent_task 必须包含 plan_id（或 id）、step_id、task_id")
+                parent_task_dict = {
+                    'plan_id': plan_id,
+                    'step_id': step_id,
+                    'task_id': task_id
+                }
+
             new_plan = Plan(
                 id=id,
                 name=name,
                 description=description,
                 steps=steps if steps is not None else [],
                 next=None,
-                file_name=plan_name
+                file_name=plan_name,
+                parent_task=parent_task_dict
             )
             self._update_next(new_plan)
             self._plans[id] = new_plan
             self.storage.save(self.namespace, new_plan, id, plan_name)
             # 如有parent_task，挂载到父任务的sub_plans
             if parent_task:
-                p_id, s_id, t_id = parent_task['id'], parent_task['step_id'], parent_task['task_id']
+                # 强制所有id为str，避免类型不一致
+                p_id = str(parent_task['plan_id']) if 'plan_id' in parent_task else str(parent_task['id'])
+                s_id = str(parent_task['step_id'])
+                t_id = str(parent_task['task_id'])
                 plan = self._plans.get(p_id)
+                logger.info(f"[子计划挂载] plan_id={p_id}, step_id={s_id}, task_id={t_id}, plan={plan}")
                 if plan:
-                    step = next((s for s in plan.steps if s.id == s_id), None)
-                    if step:
-                        task = next((t for t in step.tasks if t.id == t_id), None)
-                        if task:
-                            if task.sub_plans is None:
-                                task.sub_plans = []
-                            task.sub_plans.append({'id': id, 'name': name})
-                            self._save_plan(plan)
+                    task = plan.task_by_path(s_id, t_id)
+                    logger.info(f"[子计划挂载] 挂载前 task={task}, sub_plans={getattr(task, 'sub_plans', None) if task else None}")
+                    if task:
+                        if task.sub_plans is None:
+                            task.sub_plans = []
+                        # 避免重复添加
+                        if not any(sub.id == id for sub in task.sub_plans):
+                            task.sub_plans.append(SubPlanRef(id=id, name=name, status=new_plan.status))
+                        self._save_plan(plan)
+                        logger.info(f"[子计划挂载] 挂载后 sub_plans={task.sub_plans}")
+                    else:
+                        logger.error(f"[子计划挂载] 未找到父任务: plan_id={p_id}, step_id={s_id}, task_id={t_id}")
             return success("计划创建成功", data=new_plan.model_dump(mode='json'))
         except ValidationError as ve:
             logger.error(f"创建计划时Pydantic校验失败: {ve}")
@@ -155,7 +180,21 @@ class PlanManager:
         parent_task: Annotated[dict, "父任务索引，必须包含id, step_id, task_id"] = None
     ) -> ResponseType:
         """
-        创建子计划（仅SOPAgent使用）。
+        创建子计划
+
+        幂等性要求：
+            - 调用前必须先通过 get_task 查询父任务的 sub_plans 字段，判断是否已存在同 plan_id 的子计划，避免重复创建。
+            - 如已存在同 id 的子计划，将直接返回错误（status: error, message: 计划ID已存在）。
+        前置条件：
+            - parent_task 必须包含 plan_id（或 id）、step_id、task_id。
+        典型错误：
+            - parent_task 缺少必要字段时，返回 status: error, message: 必须包含 plan_id（或 id）、step_id、task_id。
+            - 计划ID已存在时，返回 status: error, message: 计划ID xxx 已存在。
+        用法示例：
+            >>> # 先查父任务
+            >>> task_info = plan_manager.get_task(plan_id, step_id, task_id)
+            >>> if not task_info['data']['task'].get('sub_plans'):
+            ...     plan_manager.create_sub_plan(...)
         Args:
             name: 子计划名称。
             description: 子计划描述。
@@ -168,12 +207,22 @@ class PlanManager:
         """
         if not parent_task:
             return error("parent_task为必填，必须包含id, step_id, task_id")
+        if self._plans.get(id):
+            return error(ErrorMessages.PLAN_EXISTS.format(plan_id=id))
         return self._create_plan(name, description, steps, id, plan_name, parent_task=parent_task)
 
     def get_plan(self, id: str) -> ResponseType:
         """
         获取指定计划的详细信息，包括计划结构、状态和所有步骤、任务。
 
+        幂等性要求：
+            - 可多次重复调用，无副作用。
+        前置条件：
+            - id 必须为已存在的计划ID。
+        典型错误：
+            - 未找到计划时，返回 status: error, message: 未找到计划。
+        用法示例：
+            >>> plan_manager.get_plan("0.1")
         Args:
             id (str): 计划唯一标识（plan_id）。
         Returns:
@@ -265,10 +314,20 @@ class PlanManager:
     def _cascade_status_update(self, plan: Plan) -> None:
         """
         递归刷新plan下所有step和task的状态，实现任务→步骤→计划的级联状态同步。
+        同步更新sub_plans中的status字段。
+        父任务只要有子计划未完成，状态不能为 completed。
         """
         step_status_set = set()
         for step in plan.steps:
             original_step_status = step.status
+            for task in step.tasks:
+                # 如果有子计划，父任务状态必须依赖所有子计划状态
+                if task.sub_plans:
+                    # 只要有子计划未完成，父任务状态不能为 completed
+                    if any(sub.status != "completed" for sub in task.sub_plans):
+                        task.status = "in_progress"  # 或 "not_started"，视业务定义
+                    else:
+                        task.status = "completed"
             if not step.tasks:
                 step.status = "not_started"
             elif all(task.status == "completed" for task in step.tasks):
@@ -282,6 +341,13 @@ class PlanManager:
             if step.status != original_step_status:
                 logger.info(f"步骤 '{step.id or step.index}' 状态根据任务自动更新为: {step.status}")
             step_status_set.add(step.status)
+            # 同步更新task.sub_plans中的status
+            for task in step.tasks:
+                if task.sub_plans:
+                    for sub in task.sub_plans:
+                        sub_plan = self._plans.get(sub.id)
+                        if sub_plan:
+                            sub.status = sub_plan.status
         original_plan_status = plan.status
         if step_status_set == {"completed"} and plan.steps:
             plan.status = "completed"
@@ -291,6 +357,17 @@ class PlanManager:
             plan.status = "not_started"
         if plan.status != original_plan_status:
             logger.info(f"计划 '{plan.name}' (ID: {plan.id}) 状态根据步骤自动更新为: {plan.status}")
+        # 每次都同步父任务sub_plans中的status
+        if plan.parent_task:
+            p_id, s_id, t_id = plan.parent_task['plan_id'], plan.parent_task['step_id'], plan.parent_task['task_id']
+            parent_plan = self._plans.get(p_id)
+            if parent_plan:
+                task = parent_plan.task_by_path(s_id, t_id)
+                if task and task.sub_plans:
+                    for sub in task.sub_plans:
+                        if sub.id == plan.id:
+                            sub.status = plan.status
+                    self._save_plan(parent_plan)
 
     # --- Task Operations --- #
 
@@ -350,6 +427,16 @@ class PlanManager:
     ) -> ResponseType:
         """
         更新指定计划下某步骤的某个任务，并自动追加操作记录（note），支持sub_plan_id关联。
+
+        幂等性要求：
+            - 多次对同一任务重复 update_task(status=completed) 不会影响最终状态。
+        前置条件：
+            - plan_id、step_id、task_id 必须存在。
+            - author 必须传入。
+        典型错误：
+            - 未找到计划/步骤/任务时，返回 status: error, message: 未找到xxx。
+        用法示例：
+            >>> plan_manager.update_task(plan_id, step_id, task_id, {"status": "completed"}, author="AgentA")
         Args:
             plan_id: 计划ID。
             step_id: 步骤ID。
@@ -441,6 +528,15 @@ class PlanManager:
     ) -> ResponseType:
         """
         获取指定任务详细信息，并补充plan_info/step_info。
+
+        幂等性要求：
+            - 可多次重复调用，无副作用。
+        前置条件：
+            - plan_id、step_id、task_id 必须存在。
+        典型错误：
+            - 未找到计划/步骤/任务时，返回 status: error, message: 未找到xxx。
+        用法示例：
+            >>> plan_manager.get_task(plan_id, step_id, task_id)
         Args:
             plan_id: 计划ID。
             step_id: 步骤ID。

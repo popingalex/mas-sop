@@ -5,11 +5,12 @@ from autogen_agentchat.messages import TextMessage, BaseChatMessage, HandoffMess
 from autogen_core.models import ChatCompletionClient, SystemMessage
 from autogen_core.models._types import UserMessage, AssistantMessage, FunctionExecutionResultMessage
 from .sop_agent import SOPAgent, TurnManager
-from ..config.parser import AgentConfig, TeamConfig
+from src.types import AgentConfig, TeamConfig
 from ..tools.plan.manager import PlanManager
 from autogen_agentchat.agents import BaseChatAgent
 from src.types.plan import PlanContext, Plan
 from autogen_agentchat.conditions import FunctionalTermination
+import yaml
 
 class SOPManager(BaseChatAgent):
     """SOPManager: SOP计划调度者，负责推进和分发任务，不直接执行任务。"""
@@ -49,23 +50,33 @@ class SOPManager(BaseChatAgent):
         """本Agent可能产生的消息类型。"""
         return (StructuredMessage[PlanContext], HandoffMessage)
 
+    async def get_next_task(self, plan_id: str) -> Optional[tuple]:
+        """
+        递归推进主计划和子计划，返回 (plan_id, step_id, task_id) 或 None（全部完成）。
+        """
+        plan_response = self.plan_manager.get_plan(plan_id)
+        plan = plan_response["data"]
+        plan_obj = Plan.model_validate(plan)
+        if not plan_obj.next:
+            return None
+        step_id, task_id = plan_obj.next
+        task = plan_obj.task_by_path(step_id, task_id)
+        if task and task.sub_plans:
+            for sub in task.sub_plans:
+                if sub.status != 'completed':
+                    return await self.get_next_task(sub.id)
+            return await self.get_next_task(plan_id)
+        else:
+            return plan_id, step_id, task_id
+
     async def on_messages(self, messages, cancellation_token):
         for msg in messages:
             if isinstance(msg, StructuredMessage) and isinstance(msg.content, PlanContext):
                 if msg.source == 'Starter':
                     self.plan_context = msg.content
                 break
-            # if isinstance(msg, HandoffMessage):
-            #     pass
             else:
                 print(f"{self.name} {type(msg)}================")
-                # print(msg)
-                # print(f"============================")
-            #     pass
-            # return msg
-        
-        # if not plan_ctx:
-        #     raise RuntimeError(f"[SOPManager] 未找到PlanContext结构的消息，无法推进计划")
         plan_id = self.plan_context.plan_id
         plan_response = self.plan_manager.get_plan(plan_id)
         plan = plan_response["data"]
@@ -73,14 +84,26 @@ class SOPManager(BaseChatAgent):
         if not plan or plan_obj.status == 'completed':
             logger.info(f"[SOPManager] 计划已完成: {plan_id}")
             return Response(chat_message=StructuredMessage[PlanContext](content=self.plan_context, source=self.name))
-        next_task = plan_obj.next
-        step_id, task_id = next_task
-        step = next((s for s in plan_obj.steps if s.id == step_id), None)
-        task = next((t for t in step.tasks if t.id == task_id), None)
 
+        next_task_info = await self.get_next_task(plan_id)
+        if not next_task_info:
+            logger.info(f"[SOPManager] 计划已完成: {plan_id}")
+            return Response(chat_message=StructuredMessage[PlanContext](content=self.plan_context, source=self.name))
+        plan_id, step_id, task_id = next_task_info
+        plan_response = self.plan_manager.get_plan(plan_id)
+        plan = plan_response["data"]
+        plan_obj = Plan.model_validate(plan)
+        task = plan_obj.task_by_path(step_id, task_id)
         assignee = task.assignee
         logger.info(f"[SOPManager] 分发任务: step={step_id}, task={task_id}, assignee={assignee}")
-        task_desc = f"你需要完成的任务是：{task.name}。\n描述：{task.description}。参数：plan_id={plan_id}, step_id={step_id}, task_id={task_id}"
+        task_desc_dict = {
+            'task_name': task.name,
+            'description': task.description,
+            'plan_id': plan_id,
+            'step_id': step_id,
+            'task_id': task_id
+        }
+        task_desc = yaml.dump(task_desc_dict, allow_unicode=True, sort_keys=False)
         recent_context = [
             m for m in messages
             if isinstance(m, (SystemMessage, UserMessage, AssistantMessage, FunctionExecutionResultMessage))

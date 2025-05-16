@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage, BaseChatMessage, StructuredMessage
 from autogen_core.models import SystemMessage, UserMessage
-from ..config.parser import TeamConfig
+from src.types import TeamConfig
 from ..tools.plan.manager import PlanManager
 from ..llm.utils import maybe_structured
 from autogen_agentchat.base import Response, TaskResult

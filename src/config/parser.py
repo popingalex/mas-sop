@@ -10,6 +10,7 @@ from pathlib import Path
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from .llm_config import create_completion_client
 from src.types.plan import PlanTemplate
+from src.types import TeamConfig
 
 # --- Pydantic 模型定义 ---
 
@@ -22,40 +23,7 @@ class LLMConfig(BaseModel):
         "extra": "allow"  # 允许额外字段
     }
 
-class GlobalSettings(BaseModel):
-    default_llm_config: Optional[LLMConfig] = None
-    shared_tools: Optional[List[str]] = None
-
-class HandoffTarget(BaseModel):
-    """Defines a handoff target for an agent."""
-    target: str
-    # description field removed as per user request
-
 # 再定义依赖它们的 AgentConfig 和 TeamConfig
-class AgentConfig(BaseModel):
-    """Configuration for a single agent."""
-    name: str
-    prompt: Optional[str] = None
-    llm_config: Optional[LLMConfig] = None
-    sop_templates: Optional[Dict[str, Any]] = None
-    judge_agent_llm_config: Optional[LLMConfig] = None
-    expertise_area: Optional[str] = None
-    eve_interface_config: Optional[Dict[str, Any]] = None
-    actions: Optional[List[str]] = None
-    handoffs: Optional[List[HandoffTarget]] = None
-    assigned_tools: Optional[List[str]] = None
-
-class TeamConfig(BaseModel):
-    """Overall team configuration model."""
-    version: str
-    name: str
-    task: Optional[str] = None
-    agents: List[AgentConfig]
-    workflows: Optional[List[PlanTemplate]] = None
-    properties: Optional[Dict[str, Any]] = None
-    nexus_settings: Optional[Dict[str, Any]] = None
-    global_settings: Optional[GlobalSettings] = None
-
 def load_team_config(filepath: str) -> TeamConfig:
     """Loads and parses the team's YAML configuration file using Pydantic models.
     支持如下用法：

@@ -9,7 +9,7 @@ from typing import Dict, Any, List, TypedDict, Literal
 import json # For plan parsing in assertions
 from unittest.mock import MagicMock, AsyncMock # For mocking PlanManager
 from src.agents.sop_agent import SOPAgent # Assuming SOPAgent is importable
-from src.config.parser import AgentConfig # Assuming AgentConfig is importable
+from src.types import AgentConfig # Assuming AgentConfig is importable
 from src.tools.plan.manager import PlanManager
 from src.types.plan_types import Plan, Step # Updated path
 from loguru import logger

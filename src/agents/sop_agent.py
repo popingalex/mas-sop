@@ -4,20 +4,25 @@ from loguru import logger
 import hashlib
 import asyncio
 import logging
+import yaml
+import json
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage, BaseChatMessage, ChatMessage, HandoffMessage
-from autogen_core.models import ChatCompletionClient, SystemMessage
+from autogen_core.models import ChatCompletionClient, SystemMessage, UserMessage
 from autogen_core import CancellationToken
+from autogen_core.tools import FunctionTool, BaseTool
+from autogen_core.models._types import FunctionCall
+from autogen_core.models import AssistantMessage
 
 from ..tools.plan.manager import PlanManager
 from src.types.plan import Plan, Step
-from ..config.parser import AgentConfig, TeamConfig
+from src.types import AgentConfig, TeamConfig
 from ..types import JudgeDecision
 from autogen_agentchat.tools import AgentTool
 from autogen_agentchat.base._handoff import Handoff
 from autogen_agentchat.base import Response
-
+from autogen_agentchat.messages import BaseAgentEvent
 # 新增TurnManager类
 class TurnManager:
     def __init__(self) -> None:
@@ -37,14 +42,14 @@ class SOPAgent(AssistantAgent):
     SOP_BEHAVIOR_REQUIREMENT = """
 你只负责接收并完成分配给你的任务。
 收到任务后，必须严格按照以下顺序操作：
-1. 首先调用 update_task 工具，将当前任务状态更新为 'completed'。
-2. 等待并确认 update_task 操作已成功（收到成功响应）。
-3. 只有在任务状态成功更新后，才能将任务handoff回SOPManager。
-禁止跳步、合并操作或只执行其中一项。
+1. 每次执行任务前，务必主动查询任务和计划的最新状态（如 get_task 或 get_plan），以判断当前任务是否有关联的子计划，并据此推进。
+2. 所有工具调用必须严格遵循工具说明文档（docstring），包括幂等性、前置条件、错误处理等。
+3. 禁止跳步、合并操作或只执行其中一项。
 """
-    SOP_DEBUG_MESSAGE = (
-        "重要！！！收到任务后，必须先调用update_task工具将任务状态更新为'completed'，并在收到成功响应后，再进行handoff操作。禁止只做handoff或只做状态更新！！！"
-    )
+    SOP_DEBUG_MESSAGE = """
+重要：所有工具调用必须严格遵循工具说明文档（docstring），遇到错误或特殊返回值时，按工具文档处理，不要自行猜测或重复操作。
+无需解释原因，也无需说明任务执行过程。
+"""
     
     def __init__(
         self,
@@ -68,7 +73,7 @@ class SOPAgent(AssistantAgent):
             plan_manager.get_task,
             plan_manager.update_task,
         ]
-        
+
         super().__init__(
             name=agent_config.name,
             tools=list(set(tools + plan_tools)),
@@ -81,22 +86,9 @@ class SOPAgent(AssistantAgent):
         # 2. 注入配置文件自定义prompt（如有）
         self._system_messages.append(SystemMessage(content=agent_config.prompt))
         # 2.5 注入actions（如有）
-        actions = None
-        if agent_config and hasattr(agent_config, 'actions') and agent_config.actions:
-            actions = agent_config.actions
-        elif team_config is not None:
-            # 兼容直接传入team_config的情况
-            agent_entry = None
-            if hasattr(team_config, 'agents'):
-                for ag in team_config.agents:
-                    if getattr(ag, 'name', None) == name:
-                        agent_entry = ag
-                        break
-            if agent_entry and hasattr(agent_entry, 'actions'):
-                actions = agent_entry.actions
-        if actions:
-            actions_str = '\n'.join(f'- {a}' for a in actions)
-            self._system_messages.append(SystemMessage(content=f"--- 角色职责（actions） ---\n{actions_str}"))
+        if agent_config.actions:
+            actions_yaml = yaml.dump({'角色能力': agent_config.actions}, allow_unicode=True, sort_keys=False)
+            self._system_messages.append(SystemMessage(content=actions_yaml))
         # 3. 注入系统内置行为约束（始终兜底）
         self._system_messages.append(SystemMessage(content=self.SOP_BEHAVIOR_REQUIREMENT))
         # 4. 调试提示（如有）
@@ -107,35 +99,134 @@ class SOPAgent(AssistantAgent):
         self.artifact_manager = artifact_manager
         self.judge_agent = None
         self.turn_manager = turn_manager
-        logger.info(f"[{self.name}] 已注册工具: {[t.__name__ if hasattr(t, '__name__') else str(t) for t in self._tools]}")
-        logger.info(f"[{self.name}] 支持handoff给: {self.handoffs}")
-        logger.info(f"[{self.name}] 提示词:")
-        for msg in self._system_messages:
-            if hasattr(msg, "content"):
-                logger.info(f"\n--- {getattr(msg, 'type', '')} ---\n{msg.content}\n")
-            else:
-                logger.info(str(msg))
+        msg_str = '\n'.join([msg.content for msg in self._system_messages])
+        logger.info(f"[{self.name}] 提示词:{msg_str}")
 
-    async def quick_think(self, task_content: str):
-        """快速思考，调用 judge_agent 判断任务类型。"""
-        if not self.judge_agent:
+    async def judge(self, task_content: str) -> JudgeDecision | None:
+        from src.agents.judge import JUDGE_PROMPT, JudgeDecision
+        from autogen_core.models import UserMessage
+        # 适配 SOPManager YAML 格式 handoff message
+        try:
+            task_dict = yaml.safe_load(task_content)
+            task_desc = task_dict.get("description", str(task_content))
+        except Exception as e:
+            logger.error(f"{self.name}: YAML解析失败: {e}, content: {task_content}")
+            task_desc = str(task_content)
+        messages = [
+            SystemMessage(content=JUDGE_PROMPT),
+            UserMessage(content=task_desc, source="user")
+        ]
+        logger.info(f"[judge] agent={self.name} 任务内容: {task_desc}")
+        result = await self._model_client.create(
+            messages,
+            json_output=True  # 强制要求 LLM 输出纯 JSON
+        )
+        try:
+            decision = JudgeDecision.model_validate_json(result.content)
+            logger.info(f"[judge] agent={self.name} 判定结果: {decision.type}")
+            return decision
+        except Exception as e:
+            logger.error(f"{self.name}: JudgeDecision parse error: {e}, content: {result.content}")
             return None
-        async for event in self.judge_agent.run(task_content):
-            if isinstance(event, dict) and "chat_message" in event:
-                msg = event["chat_message"]
-                try:
-                    from src.agents.judge import JudgeDecision
-                    decision = JudgeDecision.model_validate_json(msg.content)
-                    return decision
-                except Exception as e:
-                    logger.error(f"{self.name}: JudgeDecision parse error: {e}")
-        return None
     
-    async def on_messages_stream(self, messages: list[BaseChatMessage], cancellation_token=None, **kwargs):
-        async for msg in super().on_messages_stream(messages, cancellation_token, **kwargs):
-            print(f"{self.name} {type(msg)}================")
-            # print(msg)
-            # print(f"============================")
-            # if isinstance(msg, Response):
-            #     pass
-            yield msg
+    async def create_sub_plan(self, task_content: str, parent_plan_info: dict = None) -> str:
+        """调用 LLM 生成结构化子计划，并 function call create_sub_plan 工具。\n调用前需判断父任务是否已存在同 plan_id 的子计划，避免重复创建。"""
+        team_actions = {agent.name: agent.actions for agent in self.team_config.agents}
+        actions_yaml = yaml.dump({'团队成员能力': team_actions}, allow_unicode=True, sort_keys=False)
+        plan_prompt = "你收到的任务较为复杂，请为该任务分解出一个包含多个步骤的子计划，并为每个子任务分配最合适的团队成员。"
+        plan_messages = [
+            SystemMessage(content=plan_prompt),
+        ]
+        # 父计划上下文补充
+        parent_info_yaml = yaml.dump({'父任务标识': parent_plan_info}, allow_unicode=True, sort_keys=False)
+        
+        plan_messages.append(SystemMessage(content=parent_info_yaml))
+        plan_messages.extend([
+            SystemMessage(content=actions_yaml),
+            SystemMessage(content="请直接调用 create_sub_plan 工具，参数需包含父计划/任务标识，输出结构化的子计划（每个子任务包含：步骤名称、描述、assignee）。"),
+            UserMessage(content=task_content, source="user")
+        ])
+        plan_result = await self._model_client.create(
+            plan_messages,
+            tools=[FunctionTool(self.plan_manager.create_sub_plan, description=self.plan_manager.create_sub_plan.__doc__ or "")],
+        )
+        # 处理 function calling 返回
+        if isinstance(plan_result.content, list):
+            for call in plan_result.content:
+                if isinstance(call, FunctionCall) and call.name == "create_sub_plan":
+                    args = json.loads(call.arguments)
+                    create_resp = self.plan_manager.create_sub_plan(**args)
+                    plan_id = create_resp["data"]["id"] if create_resp.get("data") else None
+                    return plan_id or str(create_resp)
+        # 兼容 LLM 直接输出字符串的情况
+        return str(plan_result.content)
+
+    async def on_messages_stream(self, messages: list[BaseChatMessage], cancellation_token=None, **kwargs) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        yielded = False
+        for msg in messages:
+            if isinstance(msg, HandoffMessage) and msg.source == 'SOPManager':
+                try:
+                    task_dict = yaml.safe_load(msg.content)
+                    parent_plan_info = {
+                        "plan_id": task_dict.get("plan_id"),
+                        "step_id": task_dict.get("step_id"),
+                        "task_id": task_dict.get("task_id"),
+                    }
+                except Exception as e:
+                    logger.error(f"handoff message YAML解析失败: {e}, content: {msg.content}")
+                    parent_plan_info = None
+                task_info = self.plan_manager.get_task(
+                    plan_id=parent_plan_info["plan_id"],
+                    step_id=parent_plan_info["step_id"],
+                    task_id=parent_plan_info["task_id"]
+                )
+                sub_plans = []
+                if task_info.get("status") == "success":
+                    sub_plans = task_info["data"]["task"].get("sub_plans") or []
+                    if sub_plans is not None and len(sub_plans) > 0:
+                        logger.info(f"[on_messages_stream] 检测到已有子计划: {sub_plans}")
+                logger.info(f"agent={self.name} 任务内容: {msg.content}，已有子计划: {sub_plans}")
+                decision = await self.judge(msg.content)
+                logger.info(f"agent={self.name} judge决策: {decision.type if decision else 'None'}，sub_plans: {sub_plans}")
+                if decision and decision.type:
+                    match decision.type.lower():
+                        case "complex":
+                            if sub_plans:
+                                plan_ids = [sp["id"] for sp in sub_plans]
+                                logger.info(f"agent={self.name} 已有子计划，跳过 create_sub_plan，plan_ids={plan_ids}")
+                                plan_msg = TextMessage(
+                                    content=f"子计划已存在，计划ID为 {plan_ids}，请等待所有子计划完成后父任务自动完成。",
+                                    source=self.name
+                                )
+                                logger.info(f"agent={self.name} yield: {plan_msg.content}")
+                                yield Response(chat_message=plan_msg)
+                                yielded = True
+                                await self._model_context.add_message(AssistantMessage(content=plan_msg.content, source=self.name))
+                                return
+                            else:
+                                logger.info(f"agent={self.name} sub_plans 为空，准备调用 create_sub_plan")
+                                plan_content = await self.create_sub_plan(msg.content, parent_plan_info=parent_plan_info)
+                                logger.info(f"agent={self.name} create_sub_plan 返回: {plan_content}")
+                                plan_msg = TextMessage(
+                                    content=f"子计划已创建，计划ID为 {plan_content}，请等待所有子计划完成后父任务自动完成。",
+                                    source=self.name
+                                )
+                                logger.info(f"agent={self.name} yield: {plan_msg.content}")
+                                yield Response(chat_message=plan_msg)
+                                yielded = True
+                                await self._model_context.add_message(AssistantMessage(content=plan_msg.content, source=self.name))
+                                return
+                        case "simple":
+                            logger.info(f"agent={self.name} simple 任务，走原有流程")
+                            simple_msg = TextMessage(content="任务已完成。", source=self.name)
+                            logger.info(f"agent={self.name} yield: {simple_msg.content}")
+                            yield Response(chat_message=simple_msg)
+                            yielded = True
+                            await self._model_context.add_message(AssistantMessage(content=simple_msg.content, source=self.name))
+                            return
+        async for m in super().on_messages_stream(messages, cancellation_token, **kwargs):
+            yield m
+            yielded = True
+        if not yielded:
+            logger.warning(f"agent={self.name} 未产出任何响应，补充默认消息。")
+            yield Response(chat_message=TextMessage(content="无操作，流程已结束。", source=self.name))

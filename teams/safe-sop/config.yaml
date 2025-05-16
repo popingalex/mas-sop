@@ -4,119 +4,213 @@ name: safe-sop
 task: 2024年 7·5华容县洞庭湖决堤
 # workflow_definition_file: "teams/safe-sop/workflow.yaml" # 不再使用单独文件
 
-# 基于 docs.ref/chapter3.sop.e1.txt 的 SOP v8.1 更新 - 极简指令和任务目标描述
+# 基于 docs.ref/paper/chapter3.md (SAFE 标准化工作流) 及用户需求进行调整
 workflows:
-- name: SAFE_SOP_v8.1_Declarative
-  version: "2.1"
+- name: SAFE_SOP_v8.2_Declarative_IO
+  version: "2.2" # 版本更新
   description: "SAFE应急响应标准作业流程，聚焦于声明式任务目标。"
   steps:
-    - id: "1"
+    - id: "1" # 对应 SOP-01 (部分)
       name: "Init Plan Prep"
       label: "事件启动与规划准备"
-      assignee: "Strategist"
+      assignee: "Strategist" # 步骤负责人，任务中可覆盖
       description: |
-        事件启动与规划准备：记录事件、核查关键信息、明确响应目标，为后续分工和计划执行打下基础。
+        事件启动与规划准备：核查关键信息、明确响应目标，为后续分工和计划执行打下基础。
       tasks:
-        - id: "1"
+        - id: "1" # 对应 SOP-01 Task 1.2
           name: "Key Element Check & Completion"
           label: "关键信息核查与补全"
           assignee: "Awareness"
-          description: "核查并补全事件相关的关键信息要素，确保信息完整，为后续响应提供依据。输出关键信息清单。"
-        - id: "2"
+          description: |
+            分析初始事件信息，对照关键要素进行检查与补全，必要时通过搜索等方式获取缺失信息，最终生成关键要素清单。
+          inputs:
+            - name: "Initial Event Information"
+              label: "初始事件信息"
+          outputs:
+            - name: "Key Element List"
+              label: "关键要素清单"
+        - id: "2" # 对应 SOP-01 隐含任务，承接1.2，服务于"明确响应目标"
           name: "Clarify Response Objectives"
           label: "明确响应目标"
           assignee: "Strategist"
           description: "根据已核查的关键信息，明确本次响应的主要目标和优先事项，为后续分工和计划制定提供方向。"
+          inputs:
+            - name: "Key Element List"
+              label: "关键要素清单"
+          outputs:
+            - name: "Response Objectives Document" # 此为逻辑推断，文档中SOP-01的整体输出不直接对应此子任务
+              label: "响应目标文档"
 
-    - id: "2"
+    - id: "2" # 对应 SOP-02
       name: "Situation Awareness & Risk Assessment"
       label: "态势理解与风险评估"
       assignee: "Awareness"
       description: |
         基于现有信息，建立全面的态势感知并进行风险评估，为后续规划提供情报基础。
       tasks:
-        - id: "1"
+        - id: "1" # 对应 SOP-02 Task 2.1
           name: "Multi-Source Information Integration"
           label: "多源信息整合"
           assignee: "Awareness"
-          description: "收集、处理并整合多渠道相关信息，形成用于态势分析的综合数据集。"
-        - id: "2"
+          description: |
+            审查已有事件记录、关键要素和任务指令，明确信息收集范围。规划并从多渠道获取补充信息，进行处理与整合，最终形成综合信息数据集。
+          inputs:
+            - name: "Event Record"
+              label: "事件记录"
+            - name: "Key Element List"
+              label: "关键要素清单"
+            - name: "Task Order from Plan" # 文档中SOP-02输入之一
+              label: "任务指令"
+          outputs:
+            - name: "Integrated Information Dataset" # 逻辑中间产物
+              label: "综合信息数据集"
+        - id: "2" # 对应 SOP-02 Task 2.2
           name: "Comprehensive Situation Analysis"
           label: "综合态势分析"
           assignee: "Awareness"
-          description: "分析整合后的信息，理解当前态势，包括范围、趋势、影响和脆弱点。输出结构化态势分析。"
-        - id: "3"
+          description: "分析整合后的信息，理解当前态势，包括范围、趋势、影响和脆弱点。"
+          inputs:
+            - name: "Integrated Information Dataset"
+              label: "综合信息数据集"
+          outputs:
+            - name: "Situation Analysis Report"
+              label: "态势分析报告"
+        - id: "3" # 对应 SOP-02 Task 2.3
           name: "Comprehensive Risk Assessment"
           label: "全面风险评估"
           assignee: "Awareness"
-          description: "开展全面风险评估，包括初步广泛评估、如有需要由相关专家进行专项深度评估，并整合所有结论形成最终风险报告。"
+          description: |
+            基于态势分析报告进行初步广度风险识别。判断是否需专项评估，并记录此判断。最终整合所有评估信息，形成全面的风险评估报告。
+          inputs:
+            - name: "Situation Analysis Report"
+              label: "态势分析报告"
+          outputs:
+            - name: "Risk Assessment Report"
+              label: "风险评估报告"
 
-    - id: "3"
+    - id: "3" # 对应 SOP-03
       name: "Objectives & CoA Development"
       label: "目标确定与方案制定"
       assignee: "Strategist"
       description: |
         从分析过渡到行动规划：明确响应目标，并基于已评估的态势和风险制定最优行动方案（CoA）。
       tasks:
-        - id: "1"
+        - id: "1" # 对应 SOP-03 Task 3.1
           name: "Set Action Objectives & Priorities"
           label: "制定行动目标与优先级"
           assignee: "Strategist"
           description: "根据态势和风险评估，制定具体、可衡量、可实现、相关且有时限（SMART）的行动目标，并进行优先级排序。"
-        - id: "2"
+          inputs:
+            - name: "Situation Analysis Report"
+              label: "态势分析报告"
+            - name: "Risk Assessment Report"
+              label: "风险评估报告"
+          outputs:
+            - name: "Action Objective List"
+              label: "行动目标清单"
+        - id: "2" # 对应 SOP-03 Task 3.2
           name: "Develop Course of Action (CoA)"
           label: "制定行动方案（CoA）"
           assignee: "FieldExpert"
-          description: "制定推荐的行动方案（CoA），由相关专家基于目标生成可选CoA，经评估后选出最合适的CoA框架。"
+          description: |
+            理解行动目标清单，结合态势与风险报告，构思多个行动方案选项。评估各选项后，筛选或整合形成推荐的行动方案，并阐述理由。
+          inputs:
+            - name: "Action Objective List"
+              label: "行动目标清单"
+          outputs:
+            - name: "Action Plan" # 文档中SOP-03的输出为ActionPlan
+              label: "行动方案"
 
-    - id: "4"
+    - id: "4" # 对应 SOP-04
       name: "Resource Confirmation & Plan Finalization"
       label: "资源确认与计划定稿"
       assignee: "Strategist"
       description: |
         确认所选CoA的资源可行性，定稿完整的应急响应计划，准备执行或仿真。
       tasks:
-        - id: "1"
+        - id: "1" # 对应 SOP-04 Task 4.1
           name: "Confirm Resources for Action Plan"
           label: "确认行动方案所需资源"
           assignee: "Strategist"
-          description: "核查所选行动方案所需资源的可用性，结合当前资源状况，明确已确认资源和存在的缺口。"
-        - id: "2"
+          description: |
+            分析行动方案提取资源需求。对照基线数据和实时状态核查资源可用性。生成资源可用性报告，并分析关键资源缺口。
+          inputs:
+            - name: "Action Plan"
+              label: "行动方案"
+            - name: "Baseline Resource Data"
+              label: "资源基线数据"
+          outputs:
+            - name: "Resource Availability Report" # 逻辑中间产物
+              label: "资源可用性报告"
+            - name: "Resource Gap Analysis" # 逻辑中间产物
+              label: "资源缺口分析"
+        - id: "2" # 对应 SOP-04 Task 4.2
           name: "Finalize Emergency Response Plan"
           label: "定稿应急响应计划"
           assignee: "Strategist"
           description: "将所选行动方案与资源确认情况整合为最终可执行的应急响应计划。"
+          inputs:
+            - name: "Action Plan"
+              label: "行动方案"
+            - name: "Resource Availability Report" # 逻辑输入
+              label: "资源可用性报告"
+          outputs:
+            - name: "Final Response Plan"
+              label: "应急处置计划"
 
-    - id: "5"
+    - id: "5" # 对应 SOP-05 (扩展)
       name: "Simulation Execution"
       label: "行动方案模拟执行"
       assignee: "Executor"
       description: |
         在仿真环境中执行定稿的应急响应计划，验证其有效性并发现潜在问题。
       tasks:
-        - id: "1"
+        - id: "1" # 对应 SOP-05 Task 5.1
           name: "Drive Simulation based on Response Plan"
           label: "基于响应计划驱动仿真"
           assignee: "Executor"
-          description: "将定稿计划转化为仿真指令，在执行验证环境（EVE）中配置并运行仿真，记录结果。"
+          description: |
+            解析应急响应计划，将其转化为模拟环境可执行的指令。配置并驱动模拟，详细记录过程，最后生成执行日志。
+          inputs:
+            - name: "Final Response Plan"
+              label: "应急处置计划"
+          outputs:
+            - name: "Execution Log"
+              label: "执行过程日志"
 
-    - id: "6"
+    - id: "6" # 对应 SOP-06 (扩展)
       name: "Result Review & Summary"
       label: "结果检查与复盘"
       assignee: "Strategist"
       description: |
         评估仿真执行结果，开展流程复盘，总结经验教训以便未来改进。
       tasks:
-        - id: "1"
+        - id: "1" # 对应 SOP-06 Task 6.1
           name: "Check Simulation Execution Results"
           label: "检查仿真执行结果"
           assignee: "Strategist"
           description: "分析仿真执行日志，对比计划目标，报告仿真中的计划表现。"
-        - id: "2"
+          inputs:
+            - name: "Final Response Plan"
+              label: "应急处置计划"
+            - name: "Execution Log"
+              label: "执行过程日志"
+          outputs:
+            - name: "Execution Check Report"
+              label: "执行检查报告"
+        - id: "2" # 对应 SOP-06 Task 6.2
           name: "Conduct Process Review & Summary"
           label: "复盘与总结"
           assignee: "Strategist"
           description: "复盘仿真结果及整体SOP执行过程，总结经验教训和改进点，输出总结报告。"
+          inputs:
+            - name: "Execution Check Report"
+              label: "执行检查报告"
+            - name: "Execution Log" # 逻辑上需要
+              label: "执行过程日志"
+          outputs:
+            - name: "Review Summary Report"
+              label: "复盘总结报告"
 
 global_settings:
   default_llm_config:
@@ -127,48 +221,49 @@ agents:
   # --- Strategist ---
   - name: Strategist
     actions:
-      - 协调团队根据整体工作流计划开展工作。
-      - 做出战略决策（如是否需要专家、CoA选择等）。
-      - 整合其他角色的信息和结果。
-      - 确保整体计划的连贯性和完成。
+      - 驱动和协调SOP工作流的整体进展。
+      - 基于态势分析和风险评估，设定清晰的响应目标和优先级。
+      - 评估并选择最优的行动方案（CoA），权衡利弊并记录决策依据。
+      - 整合各方信息和产出，形成连贯、完整的应急响应计划。
+      - 监控计划执行状态，必要时进行调整和干预。
+      - 负责最终结果的复盘、总结与经验提炼。
     prompt: |
-      你的职责是协调团队执行分配的应急响应工作流。
-      利用你的规划、推理、整合和决策能力完成分配任务，引导团队实现整体目标。
-      除非特别说明，生成内容默认使用中文。
+      你的职责是驱动整个SOP流程，确保各阶段目标达成，整合团队产出形成最终计划，并对关键节点做出决策。
+      利用你的战略规划、逻辑推理、信息整合和果断决策能力完成分配给你的任务，引导团队高效协作，实现整体响应目标。
 
   # --- Awareness ---
   - name: Awareness
     actions:
-      - 收集、处理并整合多渠道信息。
-      - 核查并补全关键信息要素。
-      - 进行全面的态势分析。
-      - 开展初步（广泛）风险评估。
-      - 生成相关信息资产（关键信息清单、态势分析报告等）。
+      - 高效收集、处理、验证并整合来自多渠道的事件相关信息。
+      - 精准核查、提取并补全关键信息要素，确保信息的完整性和准确性。
+      - 构建全面、动态的综合态势图景，识别事件范围、趋势、影响和脆弱点。
+      - 执行广度优先的初步风险识别和评估。
+      - 负责生成结构化的信息资产，如：关键要素清单、综合信息数据集、态势分析报告、初步风险评估。
+      - 持续监控信息变化，并在必要时更新态势和风险判断。
     prompt: |
-      你的职责是建立态势感知并进行初步风险评估。
-      利用你在信息收集、处理、融合、分析和初步风险识别方面的能力，高效完成分配任务。
-      除非特别说明，生成内容默认使用中文。
+      你的核心职责是构建准确、全面且动态更新的应急态势图景，并进行初步风险评估。
+      利用你在信息高效收集、精准处理、深度融合、模式分析及初步风险识别方面的卓越能力，为团队提供可靠的决策依据。
 
   # --- Field Expert ---
   - name: FieldExpert
     actions:
-      - 提供专项分析和洞见（按需）/ Provide specialized analysis and insights when requested.
+      - 根据当前任务需求和可用信息，在特定专业领域提供深入的专业分析和评估。
+      - 基于专业知识和当前态势，生成具体的、可操作的行动方案（CoA）选项。
+      - 清晰阐述专业分析的依据、假设、局限性以及方案的预期效果和潜在风险。
+      - 能够进行深度风险评估或预测（在具备相应工具或模型支持时）。
     prompt: |
-      你的职责是在分配相关任务时，提供深度领域分析并生成可行的行动方案。
-      利用你在${role_config.expertise_area}的专业能力，完成分配任务，输出专业见解和解决方案。
-      除非特别说明，生成内容默认使用中文。
+      当接收到任务时，你需要根据任务上下文明确当前需要应用的专业知识领域，进行专项评估并制定具体、可行的行动方案。确保你的分析和方案具备专业性和实用性。
 
   # --- Executor ---
   - name: Executor
     actions:
-      - 将最终响应计划转化为可执行的仿真指令/配置。
-      - 对接执行验证环境（EVE）运行仿真。
-      - 监控仿真执行并记录结果。
-      - 汇报仿真结果。
+      - 准确解析应急响应计划，并将其转化为与仿真环境兼容的指令序列或配置。
+      - 可靠地与仿真环境接口交互，配置、启动并驱动仿真流程。
+      - 实时监控仿真执行过程，详细记录关键事件、状态变化和资源消耗。
+      - 生成结构化的仿真执行日志和结果报告。
+      - 确保模拟结果的准确记录和及时反馈。
     prompt: |
-      你的职责是对接执行验证环境（EVE），根据分配任务运行仿真。
-      利用你将计划转化并管理仿真流程的能力，结合配置的EVE接口（${role_config.eve_interface_config.type}）完成任务。
-      如适用，内部日志默认使用中文；EVE交互格式由接口决定。
+      你的核心任务是将应急响应计划转化为仿真环境可执行的指令，并管理仿真流程。
 
 # --- 其他可能的全局配置 ---
 # workflow_definition_file: "path/to/workflow.yaml" # 可选：指向单独的工作流文件

@@ -3,7 +3,7 @@ from autogen_agentchat.agents import AssistantAgent
 from autogen_core.models import SystemMessage
 from ..tools.plan.manager import PlanManager
 from ..tools.artifact_manager import ArtifactManager
-from ..config.parser import TeamConfig
+from src.types import TeamConfig
 
 PROMPT_REVIEW = """
 你是一个专业的SOP Reviewer。用户会输入一个结构化的PlanContext对象（JSON），请先通过plan_id调用get_plan工具获取计划详情，然后基于获取到的计划内容，输出结构化总结。

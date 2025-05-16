@@ -8,23 +8,23 @@ from autogen_agentchat.agents import BaseChatAgent
 from autogen_agentchat.messages import BaseChatMessage, StructuredMessage, BaseAgentEvent
 from autogen_agentchat.base import Response
 
-JudgeType = Literal["SIMPLE", "PLAN"]
+JudgeType = Literal["SIMPLE", "COMPLEX"]
 
 class JudgeDecision(BaseModel):
-    type: JudgeType = Field(..., description="The classified type of the task, either PLAN or SIMPLE.")
+    type: JudgeType = Field(..., description="The classified type of the task, either COMPLEX or SIMPLE.")
     reason: str = Field(..., description="A brief explanation for the classification decision.")
 
 JUDGE_PROMPT = """You are a highly efficient task analyzer.
 Your sole purpose is to analyze the given task description and classify its type.
 The possible types are:
-- PLAN: Requires a multi-step plan or a structured approach due to its complexity.
+- COMPLEX: Requires a multi-step plan or a structured approach due to its complexity.
 - SIMPLE: Can be handled directly in one or two steps without a formal plan.
 
-If the task description implies multiple distinct steps, dependencies, or a need for coordination, lean towards 'PLAN'.
+If the task description implies multiple distinct steps, dependencies, or a need for coordination, lean towards 'COMPLEX'.
 
 Respond STRICTLY in JSON format with the following structure. Do NOT add any text before or after the JSON block:
 {
-    "type": "PLAN|SIMPLE",
+    "type": "COMPLEX|SIMPLE",
     "reason": "Brief explanation of your decision."
 }
 
@@ -32,7 +32,7 @@ Example 1:
 User Task: "Organize a surprise birthday party for Sarah next month. This includes sending invitations, ordering a cake, and arranging entertainment."
 Your JSON Response:
 {
-    "type": "PLAN",
+    "type": "COMPLEX",
     "reason": "The task involves multiple coordinated steps (invitations, cake, entertainment) and a timeline, clearly indicating the need for a plan."
 }
 
@@ -45,7 +45,7 @@ Your JSON Response:
 }
 """
 
-JUDGE_DESCRIPTION = "Analyzes a task to determine if it's simple (SIMPLE) or complex (PLAN)."
+JUDGE_DESCRIPTION = "Analyzes a task to determine if it's simple (SIMPLE) or complex (COMPLEX)."
 
 class JudgeAgent(BaseChatAgent):
     def __init__(self, model_client: ChatCompletionClient):

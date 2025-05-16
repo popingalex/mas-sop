@@ -8,7 +8,8 @@ from string import Template
 
 # 假设SOPAgent, AgentConfig, PlanManager可以从您的项目中正确导入
 # 您需要确保这些导入路径是正确的
-from src.config.parser import AgentConfig, TeamConfig # Pydantic模型
+from src.types import AgentConfig, TeamConfig
+from src.config.parser import TeamConfig # Pydantic模型
 from src.tools.plan.manager import PlanManager # 您的PlanManager类
 from src.tools.artifact_manager import ArtifactManager # Added import
 from src.tools.storage import FileStorage # Added import

@@ -14,7 +14,8 @@ if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
 from src.agents.sop_agent import SOPAgent
-from src.config.parser import AgentConfig, LLMConfig, load_llm_config_from_toml
+from src.types import AgentConfig
+from src.config.parser import LLMConfig, load_llm_config_from_toml
 from src.tools.plan.manager import PlanManager, Plan, Step
 from src.tools.artifact_manager import ArtifactManager
 from autogen_agentchat.messages import TextMessage

@@ -2,7 +2,7 @@ from autogen_agentchat.teams import Swarm
 from src.agents.sop_agent import SOPAgent, TurnManager
 from src.agents.sop_manager import SOPManager
 from autogen_agentchat.conditions import FunctionalTermination
-from src.config.parser import TeamConfig
+from src.types import TeamConfig
 from src.tools.plan import PlanManager
 from src.tools.artifact_manager import ArtifactManager
 from src.agents.starter import Starter

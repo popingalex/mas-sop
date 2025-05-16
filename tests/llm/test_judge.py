@@ -53,10 +53,10 @@ def agent_with_tool(model_client: ChatCompletionClient, judge_tool: AgentTool) -
     [
         ("Please summarize this short paragraph about pytest fixtures.", "SIMPLE"),
         ("What is the capital of Canada?", "SIMPLE"),
-        ("Develop a comprehensive marketing strategy for our new gadget, including market research, competitor analysis, budget allocation, and a multi-channel launch plan.", "PLAN"),
-        ("Organize a surprise birthday party for Sarah next month. This includes sending invitations, ordering a cake, and arranging entertainment.", "PLAN"),
+        ("Develop a comprehensive marketing strategy for our new gadget, including market research, competitor analysis, budget allocation, and a multi-channel launch plan.", "COMPLEX"),
+        ("Organize a surprise birthday party for Sarah next month. This includes sending invitations, ordering a cake, and arranging entertainment.", "COMPLEX"),
         ("Translate 'hello world' to French.", "SIMPLE"),
-        ("Write a detailed step-by-step guide on how to bake a sourdough bread, including starter maintenance.", "PLAN"),
+        ("Write a detailed step-by-step guide on how to bake a sourdough bread, including starter maintenance.", "COMPLEX"),
     ],
     ids=[
         "simple_summary",
